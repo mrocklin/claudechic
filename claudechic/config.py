@@ -84,3 +84,17 @@ def is_new_install() -> bool:
     """Check if this is a new install (analytics ID was just created)."""
     _load_config()  # Ensure config is loaded
     return _new_install
+
+
+def get_vi_mode() -> bool:
+    """Check if vi mode is enabled."""
+    return _load_config().get("editor", {}).get("vi_mode", False)
+
+
+def set_vi_mode(enabled: bool) -> None:
+    """Enable or disable vi mode."""
+    config = _load_config()
+    if "editor" not in config:
+        config["editor"] = {}
+    config["editor"]["vi_mode"] = enabled
+    _save_config()

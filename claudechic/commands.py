@@ -35,6 +35,7 @@ COMMANDS: list[tuple[str, str, list[str]]] = [
     ("/compactish", "Compact session to reduce context", []),
     ("/usage", "Show API rate limit usage", []),
     ("/model", "Change model", []),
+    ("/vim", "Toggle vi mode for input", []),
     ("/processes", "Show background processes", []),
     (
         "/analytics",
@@ -138,6 +139,9 @@ def handle_command(app: "ChatApp", prompt: str) -> bool:
     if cmd == "/exit":
         app.exit()
         return True
+
+    if cmd == "/vim":
+        return _handle_vim(app)
 
     if cmd == "/welcome":
         return _handle_welcome(app)
@@ -472,6 +476,22 @@ def _handle_processes(app: "ChatApp") -> None:
     else:
         processes = []
     app.push_screen(ProcessModal(processes))
+
+
+def _handle_vim(app: "ChatApp") -> bool:
+    """Toggle vi-mode for input."""
+    from claudechic.config import get_vi_mode, set_vi_mode
+
+    current = get_vi_mode()
+    new_state = not current
+    set_vi_mode(new_state)
+
+    # Update all ChatInput widgets
+    app._update_vi_mode(new_state)
+
+    status = "enabled" if new_state else "disabled"
+    app.notify(f"Vi mode {status}")
+    return True
 
 
 def _handle_analytics(app: "ChatApp", command: str) -> bool:

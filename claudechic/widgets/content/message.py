@@ -14,6 +14,7 @@ from claudechic.widgets.base.cursor import PointerMixin, set_pointer
 from claudechic.errors import log_exception
 from claudechic.widgets.primitives.button import Button
 from claudechic.widgets.primitives.spinner import Spinner
+from claudechic.widgets.input.vi_mode import ViHandler, ViMode
 
 
 class ThinkingIndicator(Spinner):
@@ -297,6 +298,13 @@ class ChatInput(TextArea, PointerMixin):
             self.text = text
             super().__init__()
 
+    class ViModeChanged(Message):
+        """Posted when vi mode changes."""
+
+        def __init__(self, mode: ViMode) -> None:
+            self.mode = mode
+            super().__init__()
+
     # Supported image extensions for drag-and-drop
     IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
@@ -312,13 +320,54 @@ class ChatInput(TextArea, PointerMixin):
         self._last_image_paste: tuple[str, float] | None = (
             None  # (text, time) for dedup
         )
+        # Vi-mode support
+        self._vi_mode_enabled: bool = False
+        self._vi_handler: ViHandler | None = None
+
+    def enable_vi_mode(self, enabled: bool = True) -> None:
+        """Enable or disable vi-mode for this input."""
+        self._vi_mode_enabled = enabled
+        if enabled and self._vi_handler is None:
+            self._vi_handler = ViHandler(self)
+            self._vi_handler.set_mode_changed_callback(self._on_vi_mode_changed)
+        if enabled and self._vi_handler:
+            # Always start in INSERT mode when enabling
+            self._vi_handler.state.mode = ViMode.INSERT
+            self._on_vi_mode_changed(ViMode.INSERT)
+        elif not enabled and self._vi_handler:
+            # Notify that vi-mode is disabled (no mode indicator)
+            self.post_message(self.ViModeChanged(ViMode.INSERT))
+
+    def _on_vi_mode_changed(self, mode: ViMode) -> None:
+        """Handle vi mode change."""
+        self.post_message(self.ViModeChanged(mode))
+
+    @property
+    def vi_mode(self) -> ViMode | None:
+        """Get current vi mode, or None if vi-mode is disabled."""
+        if self._vi_mode_enabled and self._vi_handler:
+            return self._vi_handler.state.mode
+        return None
 
     async def _on_key(self, event) -> None:  # type: ignore[override]
-        """Intercept keys for autocomplete before normal processing."""
+        """Intercept keys for autocomplete and vi-mode before normal processing."""
+        # Autocomplete takes priority when visible
         if self._autocomplete and self._autocomplete.handle_key(event.key):
             event.prevent_default()
             event.stop()
             return
+
+        # Vi-mode handling (when not in INSERT mode)
+        if self._vi_mode_enabled and self._vi_handler:
+            vi_mode = self._vi_handler.state.mode
+            # In INSERT mode, only Escape is handled by vi-mode
+            # In NORMAL/VISUAL mode, all keys go through vi-mode first
+            if vi_mode != ViMode.INSERT or event.key == "escape":
+                if self._vi_handler.handle_key(event.key, event.character):
+                    event.prevent_default()
+                    event.stop()
+                    return
+
         await super()._on_key(event)
 
     def _is_image_path(self, text: str) -> list:

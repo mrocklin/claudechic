@@ -11,6 +11,7 @@ from textual.widgets import Static
 from claudechic.widgets.base.clickable import ClickableLabel
 from claudechic.widgets.layout.indicators import CPUBar, ContextBar, ProcessIndicator
 from claudechic.processes import BackgroundProcess
+from claudechic.widgets.input.vi_mode import ViMode
 
 
 class AutoEditLabel(ClickableLabel):
@@ -31,6 +32,37 @@ class ModelLabel(ClickableLabel):
 
     def on_click(self, event) -> None:
         self.post_message(self.ModelChangeRequested())
+
+
+class ViModeLabel(Static):
+    """Shows current vi mode: INSERT, NORMAL, VISUAL."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._mode: ViMode | None = None
+        self._enabled: bool = False
+
+    def set_mode(self, mode: ViMode | None, enabled: bool = True) -> None:
+        """Update the displayed mode."""
+        self._mode = mode
+        self._enabled = enabled
+
+        # Remove all mode classes
+        self.remove_class("vi-insert", "vi-normal", "vi-visual", "hidden")
+
+        if not enabled:
+            self.add_class("hidden")
+            return
+
+        if mode == ViMode.INSERT:
+            self.update("INSERT")
+            self.add_class("vi-insert")
+        elif mode == ViMode.NORMAL:
+            self.update("NORMAL")
+            self.add_class("vi-normal")
+        elif mode == ViMode.VISUAL:
+            self.update("VISUAL")
+            self.add_class("vi-visual")
 
 
 async def get_git_branch(cwd: str | None = None) -> str:
@@ -67,6 +99,7 @@ class StatusFooter(Static):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="footer-content"):
+            yield ViModeLabel("", id="vi-mode-label", classes="hidden")
             yield ModelLabel("", id="model-label", classes="footer-label")
             yield Static("·", classes="footer-sep")
             yield AutoEditLabel(
@@ -108,5 +141,13 @@ class StatusFooter(Static):
         try:
             indicator = self.query_one("#process-indicator", ProcessIndicator)
             indicator.update_processes(processes)
+        except Exception:
+            pass
+
+    def update_vi_mode(self, mode: ViMode | None, enabled: bool = True) -> None:
+        """Update the vi-mode indicator."""
+        try:
+            label = self.query_one("#vi-mode-label", ViModeLabel)
+            label.set_mode(mode, enabled)
         except Exception:
             pass

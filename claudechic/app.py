@@ -536,6 +536,12 @@ class ChatApp(App):
         # Focus input immediately - UI is ready
         self.chat_input.focus()
 
+        # Initialize vi-mode if enabled in config
+        from claudechic.config import get_vi_mode
+
+        if get_vi_mode():
+            self._update_vi_mode(True)
+
         # Connect SDK in background - UI renders while this happens
         self._connect_initial_client()
 
@@ -668,6 +674,13 @@ class ChatApp(App):
             return
         self.chat_input.clear()
         self._handle_prompt(event.text)
+
+    def on_chat_input_vi_mode_changed(self, event: ChatInput.ViModeChanged) -> None:
+        """Update footer when vi-mode changes."""
+        from claudechic.config import get_vi_mode
+
+        enabled = get_vi_mode()
+        self.status_footer.update_vi_mode(event.mode if enabled else None, enabled)
 
     def _handle_prompt(self, prompt: str) -> None:
         """Process a prompt - handles local commands or sends to Claude."""
@@ -1977,3 +1990,14 @@ class ChatApp(App):
             self.chat_input.focus()
 
         self.push_screen(DiffScreen(agent.cwd), on_dismiss)
+
+    def _update_vi_mode(self, enabled: bool) -> None:
+        """Update vi-mode on all ChatInput widgets and footer."""
+        try:
+            chat_input = self.query_one("#chat-input", ChatInput)
+            chat_input.enable_vi_mode(enabled)
+            # Update footer with initial mode
+            mode = chat_input.vi_mode if enabled else None
+            self.status_footer.update_vi_mode(mode, enabled)
+        except Exception:
+            pass
