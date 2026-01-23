@@ -19,7 +19,7 @@ def _load_config() -> dict:
         return _config
 
     if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
             _config = yaml.safe_load(f) or {}
         is_new_file = False
     else:
@@ -49,7 +49,7 @@ def _save_config() -> None:
     if not _config:
         return
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_PATH, "w") as f:
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         yaml.dump(_config, f, default_flow_style=False)
 
 

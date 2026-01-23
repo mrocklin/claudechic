@@ -62,7 +62,7 @@ def main():
         import traceback
 
         crash_log = Path(tempfile.gettempdir()) / "claudechic-crash.log"
-        with open(crash_log, "w") as f:
+        with open(crash_log, "w", encoding="utf-8") as f:
             traceback.print_exc(file=f)
         raise
 

@@ -84,7 +84,7 @@ def compact_session(
 
     # Load all messages
     messages = []
-    with open(session_file) as f:
+    with open(session_file, encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 messages.append(json.loads(line))
@@ -334,7 +334,7 @@ def compact_session(
     backup_file = session_file.with_suffix(".jsonl.bak")
     shutil.copy(session_file, backup_file)
 
-    with open(session_file, "w") as f:
+    with open(session_file, "w", encoding="utf-8") as f:
         for m in compacted_messages:
             f.write(json.dumps(m) + "\n")
 

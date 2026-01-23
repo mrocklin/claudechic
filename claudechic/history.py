@@ -19,7 +19,7 @@ def append_to_history(display: str, project: Path, session_id: str) -> None:
         "sessionId": session_id,
     }
     try:
-        with open(HISTORY_FILE, "a") as f:
+        with open(HISTORY_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
         pass  # Silently fail if can't write
@@ -35,7 +35,7 @@ def load_global_history(limit: int = 1000) -> list[str]:
 
     entries: list[tuple[int, str]] = []  # (timestamp, display)
     try:
-        with open(HISTORY_FILE) as f:
+        with open(HISTORY_FILE, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:

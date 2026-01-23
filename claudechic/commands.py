@@ -256,14 +256,6 @@ def _handle_shell(app: "ChatApp", command: str) -> bool:
     """
     import sys
 
-    # Windows doesn't have PTY support for captured output
-    if sys.platform == "win32":
-        app.notify(
-            "Shell command not fully supported on Windows. Use Claude's Bash tool.",
-            severity="warning",
-        )
-        return True
-
     parts = command.split(maxsplit=1)
     cmd = parts[1] if len(parts) > 1 else None
 
@@ -273,33 +265,63 @@ def _handle_shell(app: "ChatApp", command: str) -> bool:
         interactive = True
         cmd = cmd[3:].lstrip()
 
+    # Windows doesn't have PTY support for captured output - force interactive mode
+    is_windows = sys.platform == "win32"
+    if is_windows and cmd and not interactive:
+        app.notify(
+            "Captured shell output not supported on Windows. Running interactively.",
+            severity="warning",
+        )
+        interactive = True
+
     agent = app._agent
     cwd = str(agent.cwd) if agent else None
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
-    # Force color output, disable pagers for captured output
-    env.update(
-        {
-            "FORCE_COLOR": "1",
-            "CLICOLOR_FORCE": "1",
-            "TERM": "xterm-256color",
-            "BAT_PAGER": "",
-            "PAGER": "",
-        }
-    )
-    shell = os.environ.get("SHELL", "/bin/sh")
+
+    # Platform-specific shell and args
+    if is_windows:
+        # Windows: use cmd.exe or PowerShell
+        shell = os.environ.get("COMSPEC", "cmd.exe")
+        if cmd:
+            args = [shell, "/c", cmd]
+        else:
+            args = [shell]
+    else:
+        # Unix: use SHELL env var or fallback to /bin/sh
+        # Force color output, disable pagers for captured output
+        env.update(
+            {
+                "FORCE_COLOR": "1",
+                "CLICOLOR_FORCE": "1",
+                "TERM": "xterm-256color",
+                "BAT_PAGER": "",
+                "PAGER": "",
+            }
+        )
+        shell = os.environ.get("SHELL", "/bin/sh")
+        if cmd:
+            args = [shell, "-lc", cmd] if not interactive else [shell, "-c", cmd]
+        else:
+            args = [shell, "-l"]
 
     if cmd and not interactive:
-        # Async execution with captured output
+        # Async execution with captured output (Unix only)
         app.run_shell_command(cmd, shell, cwd, env)
     else:
         # Interactive: suspend TUI and run in real terminal
-        with app.suspend():
-            args = [shell, "-lc", cmd] if cmd else [shell, "-l"]
-            start = time.monotonic()
-            subprocess.run(args, cwd=cwd, env=env)
-            # If command was fast, wait for keypress so user can see output
-            if cmd and time.monotonic() - start < 1.0:
-                _wait_for_keypress()
+        try:
+            with app.suspend():
+                start = time.monotonic()
+                subprocess.run(args, cwd=cwd, env=env)
+                # If command was fast, wait for keypress so user can see output
+                if cmd and time.monotonic() - start < 1.0:
+                    _wait_for_keypress()
+        except Exception as e:
+            # SuspendNotSupported or other errors (e.g., in test environments)
+            app.notify(
+                f"Shell suspend not supported in this environment: {e}",
+                severity="error",
+            )
 
     return True
 
