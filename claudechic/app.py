@@ -541,9 +541,15 @@ class ChatApp(App):
         context_file = files("claudechic").joinpath("context.md")
         system_prompt = context_file.read_text()
 
+        # Respect environment variables if set (for agentic-sso proxy)
+        # When ANTHROPIC_BASE_URL is set, don't override ANTHROPIC_API_KEY
+        env: dict[str, str] = {}
+        if not os.environ.get("ANTHROPIC_BASE_URL"):
+            env["ANTHROPIC_API_KEY"] = ""
+
         return ClaudeAgentOptions(
             permission_mode="default",
-            env={"ANTHROPIC_API_KEY": ""},
+            env=env,
             setting_sources=["user", "project", "local"],
             cwd=cwd,
             resume=resume,
