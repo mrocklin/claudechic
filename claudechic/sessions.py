@@ -65,7 +65,7 @@ def get_project_sessions_dir(cwd: Path | None = None) -> Path | None:
     cwd = (cwd or Path.cwd()).absolute()
     # Replace path separators with dashes (handles both / and \ on Windows)
     # Also remove Windows drive colon (C:\foo -> C-foo)
-    project_key = str(cwd).replace(os.sep, "-").replace(":", "")
+    project_key = str(cwd).replace(os.sep, "-").replace(":", "").replace(".", "-")
     sessions_dir = Path.home() / ".claude/projects" / project_key
     return sessions_dir if sessions_dir.exists() else None
 
