@@ -646,3 +646,28 @@ FileDiffPanel .file-header {
 FileDiffPanel DiffWidget {
     padding: 0 1;
 }
+
+/* Responsive height - classes applied by app.on_resize */
+StatusFooter.compact-height {
+    display: none;
+}
+
+#input-container.compact-height {
+    margin: 0;
+    padding: 0 2;
+    min-height: 1;
+}
+
+/* Compact chat view - remove padding/margins */
+.chat-view.compact-height {
+    padding: 0;
+}
+
+.chat-view.compact-height ChatMessage,
+.chat-view.compact-height BaseToolWidget,
+.chat-view.compact-height ThinkingIndicator,
+.chat-view.compact-height ErrorMessage,
+.chat-view.compact-height SystemInfo {
+    margin: 0;
+    padding: 0 1 0 1;
+}

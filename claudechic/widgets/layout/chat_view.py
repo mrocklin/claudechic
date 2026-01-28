@@ -69,6 +69,7 @@ class ChatView(AutoHideScroll):
         ] = {}
         self._active_task_widgets: dict[str, TaskWidget] = {}
         self._recent_tools: list[ToolUseWidget | TaskWidget | AgentToolWidget] = []
+        self._thinking_indicator: ThinkingIndicator | None = None
 
     # -----------------------------------------------------------------------
     # Agent switching (full re-render)
@@ -192,8 +193,9 @@ class ChatView(AutoHideScroll):
 
     def start_response(self) -> None:
         """Show thinking indicator at start of response."""
-        if not self.query(ThinkingIndicator):
-            self.mount(ThinkingIndicator())
+        if self._thinking_indicator is None:
+            self._thinking_indicator = ThinkingIndicator()
+            self.mount(self._thinking_indicator)
             self.scroll_if_tailing()
 
     def end_response(self) -> None:
@@ -319,5 +321,6 @@ class ChatView(AutoHideScroll):
 
     def _hide_thinking(self) -> None:
         """Remove thinking indicator if present."""
-        for ind in self.query(ThinkingIndicator):
-            ind.remove()
+        if self._thinking_indicator is not None:
+            self._thinking_indicator.remove()
+            self._thinking_indicator = None

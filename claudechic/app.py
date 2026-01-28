@@ -944,8 +944,9 @@ class ChatApp(App):
         chat_view.append_system_info(message, severity)
 
     def on_resize(self, event) -> None:
-        """Reposition right sidebar on resize."""
+        """Reposition right sidebar on resize and handle compact height."""
         self.call_after_refresh(self._position_right_sidebar)
+        self.call_after_refresh(self._apply_compact_height)
 
     def _position_right_sidebar(self) -> None:
         """Show/hide right sidebar and adjust centering based on terminal width."""
@@ -1003,6 +1004,25 @@ class ChatApp(App):
             self.hamburger_btn.remove_class("visible")
             self._sidebar_overlay_open = False
             main.remove_class("sidebar-shift")
+
+    COMPACT_HEIGHT = 20  # Enable compact mode below this height
+
+    def _apply_compact_height(self) -> None:
+        """Apply compact styles based on terminal height."""
+        height = self.size.height
+        compact = height < self.COMPACT_HEIGHT
+        try:
+            for widget in [
+                self.query_one("StatusFooter"),
+                self.query_one("#input-container"),
+                *self.query(".chat-view"),
+            ]:
+                if compact:
+                    widget.add_class("compact-height")
+                else:
+                    widget.remove_class("compact-height")
+        except Exception:
+            pass  # Widgets not yet mounted
 
     def _layout_sidebar_contents(self) -> None:
         """Coordinate sidebar section visibility and compaction based on available space.

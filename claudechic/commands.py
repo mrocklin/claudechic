@@ -528,61 +528,28 @@ def _handle_bang(app: "ChatApp", command: str) -> bool:
 def _handle_welcome(app: "ChatApp") -> bool:
     """Send welcome message to Claude to present to user."""
     welcome_prompt = """\
-Welcome the user to Claude Chic, the Claude Code app that they're using. Present this information to them exactly:
+Welcome the user to Claude Chic. Present this message exactly:
 
 ---
 
 # Welcome to Claude Chic 👋
 
-Claude Chic is a drop-in replacement for the `claude` terminal UI that adds the following:
+A stylish Claude Code UI with multi-agent superpowers.
 
-## Visual Design
+**What's different:**
 
-Information is organized to be easy to scan and explore.
+- **Style:** Collapsible tool outputs, color-coded messages, context/CPU in footer
+- **Multi-agent:** `/agent <name>` or ask me to spawn agents
+- **Git worktrees:** `/worktree <branch>` for parallel feature development
+- **Shell shortcuts:** `!ls`, `!git diff`
 
--  Tool outputs are collapsible
--  Border colors indicates user (orange), assistant (blue), and tools (gray) messages
--  Context and CPU indicators are in the footer
--  Maximum width makes scanning easier on the eyes
+**Try it:** Ask me to review your codebase, or run `/resume` to revisit a past session.
 
-**Example**: Resume (`/resume`) a long Claude session to see the differnce side-by-side.
-
-## Multi-Agent
-
-Run multiple Claude agents concurrently in the same UI.
-
--  Create agents with `/agent <name>` (or ask me to make them).
--  Enable parallel workstreams without lots of terminals
--  Agents able to communicate with each other
-
-**Example:** Ask me to set up a game of chess between two agents.
-
-## Git Worktrees
-
-Create isolated git worktrees for parallel feature development.
-
--  Launch multiple improvements simultaneously without branch conflicts
--  Use `/worktree branch-nanme` to create a worktree
--  Use `/worktree finish` to merge it back into main with linear history
-
-**Example:** Run `claudechic` in your repo, and ask me to do a thorough review, launching different workstreams for each issue.
-
-## Hackable
-
-Claude Chic is open source and written in Python with Textual.  It's easy to extend with fun tools.
-
-**Example:** Use simple quality of life features like shell support with `!ls`. or `!git diff`.
-
-For more information, read
-[the docs](https://matthewrocklin.com/claudechic),
-[GitHub](https://github.com/mrocklin/claudechic),
-or this [introductory video](https://www.youtube.com/watch?v=2HcORToX5sU).
-
-Enjoy!
+Links: [Docs](https://matthewrocklin.com/claudechic) · [GitHub](https://github.com/mrocklin/claudechic) · [Video](https://www.youtube.com/watch?v=2HcORToX5sU)
 
 ---
 
-Repeat this message verbatim.  Help them if they have further questions.
+Repeat this message verbatim. Help them if they have questions.
 """
 
     app._send_to_active_agent(welcome_prompt, display_as="/welcome")
