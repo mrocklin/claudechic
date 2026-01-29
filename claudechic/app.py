@@ -53,7 +53,7 @@ from claudechic.permissions import PermissionRequest, PermissionResponse
 from claudechic.agent import Agent, ImageAttachment, ToolUse
 from claudechic.agent_manager import AgentManager
 from claudechic.analytics import capture
-from claudechic.config import get_theme, set_theme, is_new_install
+from claudechic.config import get_theme, set_theme, is_new_install, set_claude_model
 from claudechic.enums import AgentStatus, PermissionChoice, ToolName
 from claudechic.mcp import set_app, create_chic_server
 from claudechic.file_index import FileIndex
@@ -1604,7 +1604,10 @@ class ChatApp(App):
         if model == agent.model:
             return
         old_model = agent.model or "default"
-        agent.model = model
+        agent.model = model if model != "default" else None
+        # Persist to settings.json so preference survives restart
+        if not set_claude_model(model):
+            log.warning("Failed to save model preference to settings.json")
         self.run_worker(
             capture(
                 "model_changed",
@@ -1613,12 +1616,12 @@ class ChatApp(App):
                 agent_id=agent.analytics_id,
             )
         )
-        self._update_footer_model(model)
+        self._update_footer_model(model if model != "default" else None)
         if agent.client:
             self.notify(f"Switching to {model}...")
             await agent.disconnect()
             options = self._make_options(
-                cwd=agent.cwd, agent_name=agent.name, model=model
+                cwd=agent.cwd, agent_name=agent.name, model=agent.model
             )
             await agent.connect(options)
 

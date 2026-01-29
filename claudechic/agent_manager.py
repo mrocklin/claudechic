@@ -10,6 +10,7 @@ from typing import Callable, Iterator
 from claude_agent_sdk import ClaudeAgentOptions
 
 from claudechic.agent import Agent
+from claudechic.config import get_claude_model
 from claudechic.protocols import AgentManagerObserver, AgentObserver, PermissionHandler
 
 log = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ class AgentManager:
             The created agent (not yet connected)
         """
         agent = Agent(name=name, cwd=cwd, worktree=worktree)
+        agent.model = get_claude_model()
 
         # Wire callbacks
         self._wire_agent_callbacks(agent)
@@ -132,14 +134,14 @@ class AgentManager:
             The created agent (connected and ready)
         """
         agent = Agent(name=name, cwd=cwd, worktree=worktree)
-        agent.model = model
+        agent.model = model if model is not None else get_claude_model()
 
         # Wire callbacks
         self._wire_agent_callbacks(agent)
 
         # Create options and connect
         options = self._options_factory(
-            cwd=cwd, resume=resume, agent_name=agent.name, model=model
+            cwd=cwd, resume=resume, agent_name=agent.name, model=agent.model
         )
         await agent.connect(options, resume=resume)
 
