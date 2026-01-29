@@ -53,16 +53,7 @@ def load_custom_themes() -> list[Theme]:
 
         theme = Theme(
             name=name,
-            primary=colors.get("primary", "#cc7700"),
-            secondary=colors.get("secondary", "#5599dd"),
-            accent=colors.get("accent", "#445566"),
-            background=colors.get("background", "black"),
-            surface=colors.get("surface", "#111111"),
-            panel=colors.get("panel", "#555555"),
-            success=colors.get("success", "#5599dd"),
-            warning=colors.get("warning", "#aaaa00"),
-            error=colors.get("error", "#cc3333"),
-            dark=colors.get("dark", True),
+            **colors,
         )
         custom_themes.append(theme)
 
