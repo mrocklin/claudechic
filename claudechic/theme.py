@@ -1,8 +1,29 @@
-"""Theme definition for Claude Chic."""
+"""Theme definitions for Claude Chic.
+
+Custom themes can be defined in ~/.claude/.claudechic.yaml:
+
+    themes:
+      moonfly:
+        primary: "#80a0ff"
+        secondary: "#ae81ff"
+        accent: "#36c692"
+        background: "#080808"
+        surface: "#121212"
+        panel: "#323437"
+        success: "#8cc85f"
+        warning: "#e3c78a"
+        error: "#ff5d5d"
+
+    theme: moonfly  # Set as active theme
+
+Use /theme to search and switch between available themes.
+"""
 
 from textual.theme import Theme
 
-# Custom theme for Claude Chic
+from claudechic.config import CONFIG
+
+# Default Claude Chic theme - orange accent, dark background
 CHIC_THEME = Theme(
     name="chic",
     primary="#cc7700",
@@ -16,3 +37,33 @@ CHIC_THEME = Theme(
     error="#cc3333",  # Red - high usage/errors
     dark=True,
 )
+
+
+def load_custom_themes() -> list[Theme]:
+    """Load custom themes from config file.
+
+    Returns list of Theme objects defined in ~/.claude/.claudechic.yaml
+    """
+    themes_config = CONFIG.get("themes", {})
+    custom_themes = []
+
+    for name, colors in themes_config.items():
+        if not isinstance(colors, dict):
+            continue
+
+        theme = Theme(
+            name=name,
+            primary=colors.get("primary", "#cc7700"),
+            secondary=colors.get("secondary", "#5599dd"),
+            accent=colors.get("accent", "#445566"),
+            background=colors.get("background", "black"),
+            surface=colors.get("surface", "#111111"),
+            panel=colors.get("panel", "#555555"),
+            success=colors.get("success", "#5599dd"),
+            warning=colors.get("warning", "#aaaa00"),
+            error=colors.get("error", "#cc3333"),
+            dark=colors.get("dark", True),
+        )
+        custom_themes.append(theme)
+
+    return custom_themes
