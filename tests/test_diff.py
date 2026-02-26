@@ -95,32 +95,14 @@ index abc123..def456 100644
 
 class TestMergeDiffContent:
     def test_merges_hunks_to_files(self):
+        """Use a path containing 'b/' to also cover regression #54."""
         files = [
-            FileChange(path="file.py", status="modified", hunks=[]),
+            FileChange(path="bokehjs/src/lib/patch.ts", status="modified", hunks=[]),
         ]
-        diff_text = """diff --git a/file.py b/file.py
+        diff_text = """diff --git a/bokehjs/src/lib/patch.ts b/bokehjs/src/lib/patch.ts
 index abc..def 100644
---- a/file.py
-+++ b/file.py
-@@ -1,2 +1,3 @@
- old
-+new
- end
-"""
-        result = _merge_diff_content(files, diff_text)
-        assert len(result) == 1
-        assert len(result[0].hunks) == 1
-        assert "new" in result[0].hunks[0].new_lines
-
-    def test_path_containing_b_slash(self):
-        """Regression test: paths containing 'b/' (e.g. bokehjs/) should match correctly."""
-        files = [
-            FileChange(path="bokehjs/src/lib/models/glyphs/webgl/patch.ts", status="modified", hunks=[]),
-        ]
-        diff_text = """diff --git a/bokehjs/src/lib/models/glyphs/webgl/patch.ts b/bokehjs/src/lib/models/glyphs/webgl/patch.ts
-index abc..def 100644
---- a/bokehjs/src/lib/models/glyphs/webgl/patch.ts
-+++ b/bokehjs/src/lib/models/glyphs/webgl/patch.ts
+--- a/bokehjs/src/lib/patch.ts
++++ b/bokehjs/src/lib/patch.ts
 @@ -1,2 +1,3 @@
  old
 +new
