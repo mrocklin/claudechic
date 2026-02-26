@@ -282,7 +282,7 @@ def _merge_diff_content(files: list[FileChange], diff_text: str) -> list[FileCha
     for file_diff in file_diffs[1:]:  # Skip empty first split
         # Extract path from "a/path b/path" line
         first_line = file_diff.split("\n")[0]
-        match = re.search(r"b/(.+)$", first_line)
+        match = re.search(r" b/(.+)$", first_line)
         if match:
             path = match.group(1)
             path_to_diff[path] = file_diff

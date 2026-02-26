@@ -111,3 +111,22 @@ index abc..def 100644
         assert len(result) == 1
         assert len(result[0].hunks) == 1
         assert "new" in result[0].hunks[0].new_lines
+
+    def test_path_containing_b_slash(self):
+        """Regression test: paths containing 'b/' (e.g. bokehjs/) should match correctly."""
+        files = [
+            FileChange(path="bokehjs/src/lib/models/glyphs/webgl/patch.ts", status="modified", hunks=[]),
+        ]
+        diff_text = """diff --git a/bokehjs/src/lib/models/glyphs/webgl/patch.ts b/bokehjs/src/lib/models/glyphs/webgl/patch.ts
+index abc..def 100644
+--- a/bokehjs/src/lib/models/glyphs/webgl/patch.ts
++++ b/bokehjs/src/lib/models/glyphs/webgl/patch.ts
+@@ -1,2 +1,3 @@
+ old
++new
+ end
+"""
+        result = _merge_diff_content(files, diff_text)
+        assert len(result) == 1
+        assert len(result[0].hunks) == 1
+        assert "new" in result[0].hunks[0].new_lines
