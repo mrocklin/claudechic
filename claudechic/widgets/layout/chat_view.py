@@ -42,8 +42,15 @@ COLLAPSE_BY_DEFAULT = {
     ToolName.SKILL,
 }
 
-# MCP tool name prefixes to always collapse (noisy sandbox/utility tools)
-_COLLAPSE_PREFIXES = ("mcp__plugin_context-mode",)
+# MCP tool name prefixes to always collapse — configurable via
+# collapse-tool-prefixes in ~/.claude/.claudechic.yaml
+_DEFAULT_COLLAPSE_PREFIXES = [
+    "mcp__plugin_context-mode",
+    "mcp__searxng",
+]
+_COLLAPSE_PREFIXES = tuple(
+    CONFIG.get("collapse-tool-prefixes", _DEFAULT_COLLAPSE_PREFIXES)
+)
 
 
 def _collapse_by_default(tool_name: str) -> bool:
