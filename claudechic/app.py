@@ -25,6 +25,7 @@ from textual.binding import Binding
 from textual.containers import Vertical, Horizontal
 from textual.events import MouseUp
 from textual import work
+from textual.worker import Worker, WorkerState
 
 from claude_agent_sdk import (
     CLIConnectionError,
@@ -758,7 +759,7 @@ class ChatApp(App):
             CONFIG["theme"] = theme
             save_config()
 
-    @work(exclusive=True, group="connect")
+    @work(exclusive=True, group="connect", exit_on_error=False)
     async def _connect_initial_client(self) -> None:
         """Connect SDK for the initial agent."""
         if self.agent_mgr is None or self.agent_mgr.active is None:
@@ -884,7 +885,7 @@ class ChatApp(App):
 
         autocomplete.slash_commands = base
 
-    @work(exclusive=True, group="file_index")
+    @work(exclusive=True, group="file_index", exit_on_error=False)
     async def _refresh_file_index(self) -> None:
         """Refresh the file index in the background."""
         if self.file_index:
@@ -966,7 +967,7 @@ class ChatApp(App):
             chat_view._render_full()
             self.call_after_refresh(chat_view.scroll_if_tailing)
 
-    @work(group="refresh_context", exclusive=True)
+    @work(group="refresh_context", exclusive=True, exit_on_error=False)
     async def refresh_context(self) -> None:
         """Update context bar from session file (no API call)."""
         agent = self._agent
@@ -2214,6 +2215,14 @@ class ChatApp(App):
         await self.agent_mgr.close(agent_id)
 
         self.notify(f"Agent '{agent_name}' closed")
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Show a notification instead of crashing when a worker fails."""
+        if event.state == WorkerState.ERROR and event.worker.error:
+            error = event.worker.error
+            msg = str(error) or type(error).__name__
+            log.error("Worker %s failed: %s", event.worker.name, msg, exc_info=error)
+            self.notify(msg, title="Error", severity="error", timeout=10)
 
     def on_app_focus(self) -> None:
         if self._chat_input:
