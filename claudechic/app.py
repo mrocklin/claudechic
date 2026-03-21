@@ -126,6 +126,29 @@ def _categorize_cli_error(e: CLIConnectionError) -> str:
     return "unknown"
 
 
+def _kill_port(port: int) -> None:
+    """Kill whatever process is holding the given port so we can rebind."""
+    import subprocess
+    try:
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if f":{port} " in line and "LISTENING" in line:
+                    pid = line.strip().split()[-1]
+                    if pid != "0":
+                        subprocess.run(
+                            ["cmd", "/c", f"taskkill /PID {pid} /F"],
+                            capture_output=True, timeout=5,
+                        )
+                    break
+        else:
+            subprocess.run(["fuser", "-k", f"{port}/tcp"], capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
 class ChatApp(App):
     """Main chat application.
 
@@ -683,14 +706,20 @@ class ChatApp(App):
 
             try:
                 await start_server(self, self._remote_port)
-            except OSError as e:
-                log.warning(
-                    f"Remote control server failed on port {self._remote_port}: {e}"
-                )
-                self.notify(
-                    f"Remote port {self._remote_port} already in use — remote control disabled",
-                    severity="warning",
-                )
+            except OSError:
+                # Port held by previous session — kill it and retry
+                _kill_port(self._remote_port)
+                await asyncio.sleep(0.5)
+                try:
+                    await start_server(self, self._remote_port)
+                except OSError as e:
+                    log.warning(
+                        f"Remote control server failed on port {self._remote_port}: {e}"
+                    )
+                    self.notify(
+                        f"Remote port {self._remote_port} already in use — remote control disabled",
+                        severity="warning",
+                    )
 
         # Register themes (chic default + light variant + user-defined from config)
         self.register_theme(CHIC_THEME)
