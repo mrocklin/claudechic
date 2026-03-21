@@ -31,4 +31,13 @@ Branch: `worktree-disable-config` | PR: https://github.com/mrocklin/claudechic/p
 
 ## UI
 
-**Context-mode MCP tools collapse by default** — tools whose names start with `mcp__plugin_context-mode` now start collapsed, same as `Read`, `Grep`, etc. Reduces noise from sandbox utility tools that run frequently.
+**Configurable MCP tool collapse prefixes** — any MCP tool whose name starts with a configured prefix starts collapsed. Built-in defaults: `mcp__plugin_context-mode`, `mcp__searxng`. Override or extend in `.claudechic.yaml`:
+
+```yaml
+collapse-tool-prefixes:
+  - mcp__plugin_context-mode
+  - mcp__searxng
+  - mcp__your_other_tool
+```
+
+If the key is absent, built-in defaults apply. Set to an empty list `[]` to disable prefix collapsing entirely.
