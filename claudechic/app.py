@@ -680,7 +680,16 @@ class ChatApp(App):
         if self._remote_port:
             from claudechic.remote import start_server
 
-            await start_server(self, self._remote_port)
+            try:
+                await start_server(self, self._remote_port)
+            except OSError as e:
+                log.warning(
+                    f"Remote control server failed on port {self._remote_port}: {e}"
+                )
+                self.notify(
+                    f"Remote port {self._remote_port} already in use — remote control disabled",
+                    severity="warning",
+                )
 
         # Register themes (chic default + light variant + user-defined from config)
         self.register_theme(CHIC_THEME)
@@ -2232,6 +2241,21 @@ class ChatApp(App):
 
             for path in images:
                 self._attach_image(path)
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Fallback: raw clipboard image (e.g. Win+Shift+S screenshot)
+        clipboard_image = self._chat_input._grab_clipboard_image()
+        if clipboard_image:
+            now = time.time()
+            last = self._chat_input._last_image_paste
+            if last and now - last[1] < 0.5:
+                event.prevent_default()
+                event.stop()
+                return
+            self._chat_input._last_image_paste = ("__clipboard__", now)
+            self._attach_image(clipboard_image)
             event.prevent_default()
             event.stop()
 

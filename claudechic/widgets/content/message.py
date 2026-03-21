@@ -1,8 +1,17 @@
 """Chat widgets - messages, input, and thinking indicator."""
 
 import re
+import tempfile
 import time
 from pathlib import Path
+
+try:
+    from PIL import ImageGrab as _ImageGrab
+
+    _HAS_PIL = True
+except ImportError:
+    _ImageGrab = None
+    _HAS_PIL = False
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -485,6 +494,26 @@ class ChatInput(TextArea):
                 images.append(path)
         return images
 
+    def _grab_clipboard_image(self) -> Path | None:
+        """Grab raw image data from clipboard and save to a temp file.
+
+        Returns path to saved PNG, or None if clipboard has no image.
+        Used as fallback when pasted text is not a file path (e.g. screenshots).
+        """
+        if not _HAS_PIL:
+            return None
+        try:
+            img = _ImageGrab.grabclipboard()
+            if img is None or not hasattr(img, "save"):
+                return None
+            tmp_dir = Path(tempfile.gettempdir()) / "claudechic_paste"
+            tmp_dir.mkdir(exist_ok=True)
+            tmp_path = tmp_dir / f"paste_{int(time.time() * 1000)}.png"
+            img.save(tmp_path, "PNG")
+            return tmp_path
+        except Exception:
+            return None
+
     def on_paste(self, event) -> None:
         """Intercept paste - check for images BEFORE inserting text."""
         images = self._is_image_path(event.text)
@@ -501,6 +530,19 @@ class ChatInput(TextArea):
             # Attach images
             for path in images:
                 self.app._attach_image(path)  # type: ignore[attr-defined]
+            event.prevent_default()
+            event.stop()
+            return
+        # Fallback: raw clipboard image (e.g. Win+Shift+S screenshot)
+        clipboard_image = self._grab_clipboard_image()
+        if clipboard_image:
+            now = time.time()
+            if self._last_image_paste and now - self._last_image_paste[1] < 0.5:
+                event.prevent_default()
+                event.stop()
+                return
+            self._last_image_paste = ("__clipboard__", now)
+            self.app._attach_image(clipboard_image)  # type: ignore[attr-defined]
             event.prevent_default()
             event.stop()
             return

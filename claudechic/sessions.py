@@ -64,8 +64,8 @@ def get_project_sessions_dir(cwd: Path | None = None) -> Path | None:
     """
     cwd = (cwd or Path.cwd()).absolute()
     # Replace path separators with dashes (handles both / and \ on Windows)
-    # Also remove Windows drive colon (C:\foo -> C-foo)
-    project_key = str(cwd).replace(os.sep, "-").replace(":", "").replace("_", "-").replace(".", "-")
+    # Replace Windows drive colon with dash (C:\foo -> C--foo, matching Claude Code's format)
+    project_key = str(cwd).replace(os.sep, "-").replace(":", "-").replace("_", "-").replace(".", "-")
     sessions_dir = Path.home() / ".claude/projects" / project_key
     return sessions_dir if sessions_dir.exists() else None
 
@@ -220,7 +220,7 @@ async def load_session_messages(session_id: str, cwd: Path | None = None) -> lis
     skip_tags = ("<command-name>/", "<local-command-stdout>", "<local-command-caveat>")
     messages = []
     try:
-        async with aiofiles.open(session_file) as f:
+        async with aiofiles.open(session_file, encoding="utf-8") as f:
             async for line in f:
                 d = json.loads(line)
                 if d.get("type") == "user":
