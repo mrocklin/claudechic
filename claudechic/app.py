@@ -126,8 +126,12 @@ def _categorize_cli_error(e: CLIConnectionError) -> str:
     return "unknown"
 
 
-def _kill_port(port: int) -> None:
-    """Kill whatever process is holding the given port so we can rebind."""
+def _kill_port(port: int) -> bool:
+    """Kill a stale ClaudeChic process holding the given port.
+
+    Only kills Python processes — won't touch unrelated services on the port.
+    Returns True if a process was killed, False otherwise.
+    """
     import subprocess
     try:
         if sys.platform == "win32":
@@ -137,16 +141,26 @@ def _kill_port(port: int) -> None:
             for line in result.stdout.splitlines():
                 if f":{port} " in line and "LISTENING" in line:
                     pid = line.strip().split()[-1]
-                    if pid != "0":
+                    if pid == "0" or pid == str(os.getpid()):
+                        return False
+                    # Only kill if it's a Python process (i.e. a stale ClaudeChic)
+                    names = subprocess.run(
+                        ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if "python" in names.stdout.lower():
                         subprocess.run(
                             ["cmd", "/c", f"taskkill /PID {pid} /F"],
                             capture_output=True, timeout=5,
                         )
-                    break
+                        return True
+                    return False
         else:
             subprocess.run(["fuser", "-k", f"{port}/tcp"], capture_output=True, timeout=5)
+            return True
     except Exception:
         pass
+    return False
 
 
 class ChatApp(App):
@@ -708,14 +722,19 @@ class ChatApp(App):
                 await start_server(self, self._remote_port)
             except OSError:
                 # Port held by previous session — kill it and retry
-                _kill_port(self._remote_port)
-                await asyncio.sleep(0.5)
-                try:
-                    await start_server(self, self._remote_port)
-                except OSError as e:
-                    log.warning(
-                        f"Remote control server failed on port {self._remote_port}: {e}"
-                    )
+                if _kill_port(self._remote_port):
+                    await asyncio.sleep(0.5)
+                    try:
+                        await start_server(self, self._remote_port)
+                    except OSError as e:
+                        log.warning(
+                            f"Remote control server failed on port {self._remote_port}: {e}"
+                        )
+                        self.notify(
+                            f"Remote port {self._remote_port} already in use — remote control disabled",
+                            severity="warning",
+                        )
+                else:
                     self.notify(
                         f"Remote port {self._remote_port} already in use — remote control disabled",
                         severity="warning",
