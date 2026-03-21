@@ -49,7 +49,7 @@ _DEFAULT_COLLAPSE_PREFIXES = [
     "mcp__searxng",
 ]
 _COLLAPSE_PREFIXES = tuple(
-    CONFIG.get("collapse-tool-prefixes", _DEFAULT_COLLAPSE_PREFIXES)
+    CONFIG.get("collapse-tool-prefixes") or _DEFAULT_COLLAPSE_PREFIXES
 )
 
 
