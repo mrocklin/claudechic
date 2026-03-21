@@ -625,6 +625,10 @@ class ChatApp(App):
         if os.environ.get("VIRTUAL_ENV"):
             env["VIRTUAL_ENV"] = ""
 
+        # Disable worktree isolation for subagents if worktrees are disabled in config
+        worktrees_enabled = CONFIG.get("worktree", {}).get("enabled", True)
+        disallowed = [] if worktrees_enabled else ["EnterWorktree", "ExitWorktree"]
+
         return ClaudeAgentOptions(
             permission_mode="bypassPermissions"
             if self._skip_permissions
@@ -640,6 +644,7 @@ class ChatApp(App):
             hooks=self._plan_mode_hooks(),
             enable_file_checkpointing=True,
             extra_args={"replay-user-messages": None},
+            disallowed_tools=disallowed,
         )
 
     async def on_mount(self) -> None:
@@ -858,14 +863,15 @@ class ChatApp(App):
                 base.append(f"/agent close {agent.name}")
 
         # Add current worktrees
-        try:
-            from claudechic.features.worktree import list_worktrees
+        if CONFIG.get("worktree", {}).get("enabled", True):
+            try:
+                from claudechic.features.worktree import list_worktrees
 
-            for wt in list_worktrees():
-                if not wt.is_main:
-                    base.append(f"/worktree {wt.branch}")
-        except Exception:
-            pass  # Not a git repo or git not available
+                for wt in list_worktrees():
+                    if not wt.is_main:
+                        base.append(f"/worktree {wt.branch}")
+            except Exception:
+                pass  # Not a git repo or git not available
 
         autocomplete.slash_commands = base
 
@@ -1904,6 +1910,8 @@ class ChatApp(App):
 
     def _populate_worktrees(self) -> None:
         """Populate sidebar with ghost worktrees for feature branches."""
+        if not CONFIG.get("worktree", {}).get("enabled", True):
+            return
         try:
             worktrees = list_worktrees()
         except Exception:
