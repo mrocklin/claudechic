@@ -149,6 +149,56 @@ def format_result_summary(name: str, content: str, is_error: bool = False) -> st
     return ""
 
 
+_MCP_LABELS: dict[str, str] = {
+    # Context-mode sandbox tools
+    "mcp__plugin_context-mode_context-mode__ctx_execute": "Run Code",
+    "mcp__plugin_context-mode_context-mode__ctx_execute_file": "Analyze File",
+    "mcp__plugin_context-mode_context-mode__ctx_search": "Search Context",
+    "mcp__plugin_context-mode_context-mode__ctx_batch_execute": "Batch Run",
+    "mcp__plugin_context-mode_context-mode__ctx_fetch_and_index": "Fetch & Index",
+    "mcp__plugin_context-mode_context-mode__ctx_index": "Index Content",
+    "mcp__plugin_context-mode_context-mode__ctx_stats": "Context Stats",
+    "mcp__plugin_context-mode_context-mode__ctx_doctor": "Context Doctor",
+    "mcp__plugin_context-mode_context-mode__ctx_upgrade": "Context Upgrade",
+    # SearXNG
+    "mcp__searxng__searxng_web_search": "Web Search",
+    "mcp__searxng__web_url_read": "Read URL",
+    # QMD vault
+    "mcp__qmd__query": "Vault Search",
+    "mcp__qmd__get": "Vault Get",
+    "mcp__qmd__multi_get": "Vault Multi-Get",
+    "mcp__qmd__status": "Vault Status",
+}
+
+
+def _format_mcp_header(name: str, input: dict) -> str:
+    """Format an MCP tool name as a readable label with key input context."""
+    label = _MCP_LABELS.get(name)
+    if not label:
+        # Generic: mcp__server__tool_name → Server: Tool Name
+        parts = name.split("__", 2)
+        if len(parts) == 3:
+            server = parts[1].replace("-", " ").replace("_", " ").split()[0].title()
+            tool = parts[2].replace("_", " ").title()
+            label = f"{server}: {tool}"
+        else:
+            return name
+
+    # Append the most useful input snippet for known search/fetch tools
+    for key in ("query", "searches", "url", "path", "code"):
+        val = input.get(key)
+        if val:
+            if isinstance(val, list) and val:
+                val = val[0]
+            if isinstance(val, dict):
+                val = val.get("query") or val.get("q") or val.get("type", "")
+            snippet = str(val).strip()[:50]
+            if snippet:
+                return f"{label}: {snippet}"
+
+    return label
+
+
 def format_tool_header(name: str, input: dict, cwd: Path | None = None) -> str:
     """Format a one-line header for a tool use."""
     if name == ToolName.EDIT:
@@ -203,6 +253,8 @@ def format_tool_header(name: str, input: dict, cwd: Path | None = None) -> str:
         return "EnterPlanMode"
     elif name == ToolName.EXIT_PLAN_MODE:
         return "ExitPlanMode"
+    elif name.startswith("mcp__"):
+        return _format_mcp_header(name, input)
     else:
         return f"{name}"
 
