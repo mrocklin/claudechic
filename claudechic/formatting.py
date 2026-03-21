@@ -184,17 +184,40 @@ def _format_mcp_header(name: str, input: dict) -> str:
         else:
             return name
 
-    # Append the most useful input snippet for known search/fetch tools
-    for key in ("query", "searches", "url", "path", "code"):
-        val = input.get(key)
-        if val:
-            if isinstance(val, list) and val:
-                val = val[0]
-            if isinstance(val, dict):
-                val = val.get("query") or val.get("q") or val.get("type", "")
-            snippet = str(val).strip()[:50]
-            if snippet:
-                return f"{label}: {snippet}"
+    # Append the most useful input snippet based on what the tool actually uses
+    # intent: qmd__query has a human-readable intent field
+    if "intent" in input:
+        return f"{label}: {str(input['intent'])[:50]}"
+    # query: direct search terms (searxng)
+    if "query" in input:
+        return f"{label}: {str(input['query'])[:50]}"
+    # searches: qmd search array — use first query string
+    if "searches" in input:
+        searches = input["searches"]
+        if isinstance(searches, list) and searches:
+            first = searches[0]
+            q = first.get("query") or first.get("q") if isinstance(first, dict) else str(first)
+            if q:
+                return f"{label}: {str(q)[:50]}"
+    # language: ctx_execute / ctx_execute_file — show language mode
+    if "language" in input:
+        lang = str(input["language"])
+        # For file analysis also show the filename
+        if "path" in input:
+            fname = Path(input["path"]).name
+            return f"{label}: {fname} ({lang})"
+        return f"{label}: {lang}"
+    # url: web fetch tools
+    if "url" in input:
+        return f"{label}: {str(input['url'])[:50]}"
+    # path: vault get — show just the filename
+    if "path" in input:
+        fname = Path(input["path"]).name
+        return f"{label}: {fname}"
+    # commands: ctx_batch_execute — show count
+    if "commands" in input:
+        n = len(input["commands"]) if isinstance(input["commands"], list) else "?"
+        return f"{label} ({n} cmds)"
 
     return label
 
