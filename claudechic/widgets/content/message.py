@@ -144,14 +144,18 @@ class ChatMessage(Static):
         return bool(self._pending_text) or self._flush_timer is not None
 
     def compose(self) -> ComposeResult:
-        # Only render initial content - streaming content goes through MarkdownStream
-        # This prevents duplication when append_content() is called before compose() runs
-        if self._is_agent:
-            # Wrap in container for nested border effect
-            with Vertical(id="agent-inner"):
-                yield Markdown(self._initial_content, id="content")
+        # History messages (non-empty content): render as Markdown immediately.
+        # New streaming messages (empty content): start with Static for zero-cost updates.
+        # Static is swapped to Markdown once streaming completes (see flush()).
+        if self._initial_content:
+            inner = Markdown(self._initial_content, id="content")
         else:
-            yield Markdown(self._initial_content, id="content")
+            inner = Static("", id="content", markup=False)
+        if self._is_agent:
+            with Vertical(id="agent-inner"):
+                yield inner
+        else:
+            yield inner
 
     def _get_stream(self):
         """Get or create the MarkdownStream for this message."""
@@ -185,8 +189,7 @@ class ChatMessage(Static):
             )
 
     def _flush_pending(self) -> None:
-        """Flush accumulated text to the MarkdownStream."""
-        # Cancel any pending timer
+        """Flush accumulated text to the content widget."""
         if self._flush_timer is not None:
             self._flush_timer.stop()
             self._flush_timer = None
@@ -194,6 +197,17 @@ class ChatMessage(Static):
         if not self._pending_text:
             return
 
+        # Fast path: streaming message uses Static — direct string update, zero DOM cost.
+        # Avoids MarkdownStream's repeated remove/mount operations which trigger a full
+        # layout pass over every widget in the chat on every text chunk.
+        static = self.query_one_optional("#content", Static)
+        if static is not None and not isinstance(static, Markdown):
+            self._first_flush_done = True
+            static.update(self._content)
+            self._pending_text = ""
+            return
+
+        # Fallback: MarkdownStream path (history messages already have a Markdown widget).
         stream = self._get_stream()
         if not stream:
             # Widget not mounted yet - reschedule flush
@@ -202,8 +216,6 @@ class ChatMessage(Static):
             )
             return
 
-        # On first flush, write all content beyond what compose() rendered
-        # (handles race where append_content runs before compose)
         if not self._first_flush_done:
             self._first_flush_done = True
             text_to_write = self._content[len(self._initial_content) :]
@@ -215,13 +227,33 @@ class ChatMessage(Static):
         self._pending_text = ""
 
     def flush(self) -> None:
-        """Flush any pending text and stop the stream on completion."""
-        # Flush any remaining debounced text first
+        """Flush any pending text and finalise the message display."""
         self._flush_pending()
 
         if self._stream:
             self.call_later(self._stream.stop)
             self._stream = None
+
+        # If we were streaming into a Static, schedule a one-time swap to Markdown.
+        # This gives smooth streaming (zero DOM ops) then a single final render.
+        static = self.query_one_optional("#content", Static)
+        if static is not None and not isinstance(static, Markdown):
+            self.call_later(self._replace_static_with_markdown)
+
+    def _replace_static_with_markdown(self) -> None:
+        """Swap the streaming Static with a rendered Markdown widget (called once on flush)."""
+        static = self.query_one_optional("#content", Static)
+        if static is None or isinstance(static, Markdown):
+            return
+        content = self._content
+        if not content:
+            return
+        parent = static.parent
+        if parent is None:
+            return
+        # Remove Static then mount Markdown in its place (processed in queue order).
+        static.remove()
+        parent.mount(Markdown(content, id="content"))
 
     def get_raw_content(self) -> str:
         """Get raw content."""
