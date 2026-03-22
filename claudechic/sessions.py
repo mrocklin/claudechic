@@ -84,16 +84,19 @@ def _get_session_file(
     return session_file if session_file.exists() else None
 
 
-def _extract_session_info(filepath: Path) -> tuple[str, int, float]:
-    """Extract title, message count, and timestamp from a session file.
+def _extract_session_info(filepath: Path) -> tuple[str, int, float, str]:
+    """Extract title, message count, timestamp, and last message from a session file.
 
     Claude Code uses summary field if available, otherwise first user message.
     Counts non-meta user entries.
 
-    Returns (title, msg_count, last_timestamp_unix).
+    Returns (title, msg_count, last_timestamp_unix, last_msg).
+    last_msg is the last meaningful user message (>10 chars), useful as a
+    "where you left off" hint in the session picker.
     """
     summary = ""
     first_msg = ""
+    last_msg = ""
     msg_count = 0
     last_timestamp: float = 0
 
@@ -110,21 +113,26 @@ def _extract_session_info(filepath: Path) -> tuple[str, int, float]:
                     if msg_type == "summary":
                         summary = d.get("summary", "")
 
-                    # Count and extract first message
+                    # Count and extract first/last message
                     elif msg_type == "user" and not d.get("isMeta"):
                         msg_count += 1
-                        # Extract first message as fallback title
-                        if not first_msg:
-                            content = d.get("message", {}).get("content", "")
-                            if isinstance(content, str) and content.strip():
-                                if not content.startswith("<command-"):
-                                    first_msg = content.replace("\n", " ")[:100]
-                            elif isinstance(content, list) and content:
-                                block = content[0]
-                                if block.get("type") == "text":
-                                    txt = block.get("text", "")
-                                    if txt.strip() and not txt.startswith("<command-"):
-                                        first_msg = txt.replace("\n", " ")[:100]
+                        content = d.get("message", {}).get("content", "")
+                        text = ""
+                        if isinstance(content, str) and content.strip():
+                            if not content.startswith("<command-"):
+                                text = content.replace("\n", " ")[:100]
+                        elif isinstance(content, list) and content:
+                            block = content[0]
+                            if block.get("type") == "text":
+                                txt = block.get("text", "")
+                                if txt.strip() and not txt.startswith("<command-"):
+                                    text = txt.replace("\n", " ")[:100]
+                        if text:
+                            if not first_msg:
+                                first_msg = text
+                            # Track last meaningful message (skip short acks like "ok", "yes")
+                            if len(text) > 10:
+                                last_msg = text
 
                     # Track timestamp from any entry
                     if ts := d.get("timestamp"):
@@ -140,12 +148,12 @@ def _extract_session_info(filepath: Path) -> tuple[str, int, float]:
 
     # Prefer summary over first message
     title = summary or first_msg
-    return title, msg_count, last_timestamp
+    return title, msg_count, last_timestamp, last_msg
 
 
 async def get_recent_sessions(
     limit: int = 20, search: str = "", cwd: Path | None = None
-) -> list[tuple[str, str, float, int]]:
+) -> list[tuple[str, str, float, int, str]]:
     """Get recent sessions from session files (matching Claude Code behavior).
 
     Args:
@@ -186,18 +194,18 @@ async def get_recent_sessions(
         if i >= scan_limit:
             break
 
-        title, msg_count, last_ts = _extract_session_info(f)
+        title, msg_count, last_ts, last_msg = _extract_session_info(f)
 
         if msg_count == 0:
             continue
 
         title = title or f.stem[:8]
-        if search and search_lower not in title.lower():
+        if search and search_lower not in title.lower() and search_lower not in last_msg.lower():
             continue
 
         # Prefer timestamp from file content over file mtime
         effective_time = last_ts or mtime
-        sessions.append((f.stem, title, effective_time, msg_count))
+        sessions.append((f.stem, title, effective_time, msg_count, last_msg))
 
     # Sort by content timestamp (more accurate than file mtime)
     sessions.sort(key=lambda x: x[2], reverse=True)
