@@ -17,7 +17,9 @@ Branch: `worktree-disable-config` | PR: https://github.com/mrocklin/claudechic/p
 
 **`remote_port` config key** — set `remote_port: 9001` in `.claudechic.yaml` to auto-start the HTTP server on that port without needing the `--remote-port` CLI flag every launch.
 
-**Graceful port-in-use handling** — if the configured remote port is already held by a previous session, ClaudeChic now shows a warning notification and continues starting normally instead of crashing silently.
+**Graceful port-in-use handling** — if the configured remote port is already held by a previous session, ClaudeChic automatically finds and kills the stale Python process, waits 0.5s, then retries. Only kills Python processes (won't touch unrelated services). Falls back to a warning notification if the retry also fails.
+
+**Clipboard paste no longer freezes window** — `PIL.ImageGrab.grabclipboard()` was called synchronously on the event loop, blocking the entire UI while Windows read and converted the screenshot. Now runs in a thread via `asyncio.to_thread()`. Screenshot pastes are non-blocking.
 
 ## Windows session fixes
 
@@ -41,3 +43,9 @@ collapse-tool-prefixes:
 ```
 
 If the key is absent, built-in defaults apply. Set to an empty list `[]` to disable prefix collapsing entirely.
+
+**Plan review no longer hangs** — `ExitPlanMode` was rendering plan content as a Textual `Markdown` widget, which spawns hundreds of child widgets for large plans and blocks the layout thread. Also had a double-render path via `_try_update_plan_content`. Fixed by using `Static(markup=False)` (plain text, instantaneous) and applying the same lazy `content_factory` pattern as `Edit` for collapsed history items.
+
+**Startup crash fix** — `config.setdefault("collapse-tool-prefixes", None)` stored `None` in the config dict. `dict.get(key, default)` returns the stored `None` (key exists), causing `tuple(None)` to crash at import time. Fixed with `CONFIG.get("collapse-tool-prefixes") or _DEFAULT_COLLAPSE_PREFIXES`.
+
+**Desktop shortcut launches ClaudeChic** — `Claude.bat` updated to launch `python -m claudechic` with `ANTHROPIC_MODEL` + `ANTHROPIC_SMALL_MODEL` env vars for model selection, instead of the raw `claude.cmd` CLI.
