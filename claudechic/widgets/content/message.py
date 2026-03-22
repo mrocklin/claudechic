@@ -514,8 +514,10 @@ class ChatInput(TextArea):
         except Exception:
             return None
 
-    def on_paste(self, event) -> None:
+    async def on_paste(self, event) -> None:
         """Intercept paste - check for images BEFORE inserting text."""
+        import asyncio
+
         images = self._is_image_path(event.text)
         if images:
             # Deduplicate - terminals sometimes fire paste twice
@@ -534,7 +536,8 @@ class ChatInput(TextArea):
             event.stop()
             return
         # Fallback: raw clipboard image (e.g. Win+Shift+S screenshot)
-        clipboard_image = self._grab_clipboard_image()
+        # Run PIL in a thread — grabclipboard() blocks the event loop on Windows
+        clipboard_image = await asyncio.to_thread(self._grab_clipboard_image)
         if clipboard_image:
             now = time.time()
             if self._last_image_paste and now - self._last_image_paste[1] < 0.5:
