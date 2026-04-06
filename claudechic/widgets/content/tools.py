@@ -117,19 +117,18 @@ class ToolUseWidget(BaseToolWidget):
         if self.block.name == ToolName.SKILL and not self.block.input.get("args"):
             yield Static(self._header, classes="skill-header", markup=False)
             return
-        # ExitPlanMode: show plan as Markdown with special styling
+        # ExitPlanMode: show plan as plain text with lazy loading when collapsed
         if self.block.name == ToolName.EXIT_PLAN_MODE:
             self.add_class("exit-plan-mode")
-            plan_content = self._get_plan_content()
-            with QuietCollapsible(
-                title=self._header, collapsed=self._initial_collapsed
-            ):
-                if plan_content:
-                    yield Markdown(plan_content, id="plan-content")
-                else:
-                    yield Static("(Plan content not available)", id="tool-output")
-                if self._plan_path:
-                    yield Button("📋 Edit Plan", classes="edit-plan-btn")
+            if self._initial_collapsed:
+                yield QuietCollapsible(
+                    title=self._header,
+                    collapsed=True,
+                    content_factory=self._make_plan_content,
+                )
+            else:
+                with QuietCollapsible(title=self._header, collapsed=False):
+                    yield from self._make_plan_content()
             return
         # Edit tool: use lazy content when collapsed (DiffWidget is expensive)
         if self.block.name == ToolName.EDIT:
@@ -182,28 +181,39 @@ class ToolUseWidget(BaseToolWidget):
         # Use plan_path from agent (session-specific)
         if self._plan_path and self._plan_path.exists():
             try:
-                return self._plan_path.read_text()
+                return self._plan_path.read_text(encoding="utf-8")
             except Exception:
                 pass
 
         return None
 
-    def _try_update_plan_content(self, collapsible: QuietCollapsible) -> None:
-        """Try to update ExitPlanMode plan content if it wasn't available at compose time."""
-        try:
-            # Check if we have the placeholder - if plan-content exists, we're good
-            collapsible.query_one("#plan-content", Markdown)
-            return  # Already has Markdown content
-        except Exception:
-            pass  # No Markdown, check for tool-output placeholder
+    def _make_plan_content(self) -> list:
+        """Factory for lazy plan content creation (avoids rendering until expanded)."""
+        plan_content = self._get_plan_content()
+        items: list = []
+        if plan_content:
+            items.append(Static(plan_content, id="plan-content", markup=False))
+        else:
+            items.append(Static("(Plan content not available)", id="plan-placeholder"))
+        if self._plan_path:
+            items.append(Button("📋 Edit Plan", classes="edit-plan-btn"))
+        return items
 
-        # Try to get plan content now
+    def _try_update_plan_content(self, collapsible: QuietCollapsible) -> None:
+        """Try to update ExitPlanMode plan content if not available at compose time."""
+        try:
+            # Already has content — nothing to do
+            collapsible.query_one("#plan-content", Static)
+            return
+        except Exception:
+            pass
+
         plan_content = self._get_plan_content()
         if plan_content:
             try:
-                output_widget = collapsible.query_one("#tool-output", Static)
-                output_widget.remove()
-                collapsible.mount(Markdown(plan_content, id="plan-content"))
+                placeholder = collapsible.query_one("#plan-placeholder", Static)
+                placeholder.remove()
+                collapsible.mount(Static(plan_content, id="plan-content", markup=False))
             except Exception:
                 pass
 

@@ -98,19 +98,27 @@ class SessionItem(ListItem):
     SessionItem {
         pointer: pointer;
     }
+    SessionItem .session-last-msg {
+        color: $text-muted;
+        text-style: italic;
+    }
     """
 
     def __init__(
-        self, session_id: str, title: str, mtime: float, msg_count: int = 0
+        self, session_id: str, title: str, mtime: float, msg_count: int = 0, last_msg: str = ""
     ) -> None:
         super().__init__()
         self.session_id = session_id
         self.title = title
         self.mtime = mtime
         self.msg_count = msg_count
+        self.last_msg = last_msg
 
     def compose(self) -> ComposeResult:
         yield Label(self.title, classes="session-preview")
+        # Show last message as "where you left off" hint, if it differs from the title
+        if self.last_msg and self.last_msg.strip() != self.title.strip():
+            yield Label(self.last_msg[:80], classes="session-last-msg")
         time_ago = _format_time_ago(self.mtime)
         yield Label(f"{time_ago} · {self.msg_count} msgs", classes="session-meta")
 

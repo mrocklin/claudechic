@@ -149,6 +149,79 @@ def format_result_summary(name: str, content: str, is_error: bool = False) -> st
     return ""
 
 
+_MCP_LABELS: dict[str, str] = {
+    # Context-mode sandbox tools
+    "mcp__plugin_context-mode_context-mode__ctx_execute": "Run Code",
+    "mcp__plugin_context-mode_context-mode__ctx_execute_file": "Analyze File",
+    "mcp__plugin_context-mode_context-mode__ctx_search": "Search Context",
+    "mcp__plugin_context-mode_context-mode__ctx_batch_execute": "Batch Run",
+    "mcp__plugin_context-mode_context-mode__ctx_fetch_and_index": "Fetch & Index",
+    "mcp__plugin_context-mode_context-mode__ctx_index": "Index Content",
+    "mcp__plugin_context-mode_context-mode__ctx_stats": "Context Stats",
+    "mcp__plugin_context-mode_context-mode__ctx_doctor": "Context Doctor",
+    "mcp__plugin_context-mode_context-mode__ctx_upgrade": "Context Upgrade",
+    # SearXNG
+    "mcp__searxng__searxng_web_search": "Web Search",
+    "mcp__searxng__web_url_read": "Read URL",
+    # QMD vault
+    "mcp__qmd__query": "Vault Search",
+    "mcp__qmd__get": "Vault Get",
+    "mcp__qmd__multi_get": "Vault Multi-Get",
+    "mcp__qmd__status": "Vault Status",
+}
+
+
+def _format_mcp_header(name: str, input: dict) -> str:
+    """Format an MCP tool name as a readable label with key input context."""
+    label = _MCP_LABELS.get(name)
+    if not label:
+        # Generic: mcp__server__tool_name → Server: Tool Name
+        parts = name.split("__", 2)
+        if len(parts) == 3:
+            server = parts[1].replace("-", " ").replace("_", " ").split()[0].title()
+            tool = parts[2].replace("_", " ").title()
+            label = f"{server}: {tool}"
+        else:
+            return name
+
+    # Append the most useful input snippet based on what the tool actually uses
+    # intent: qmd__query has a human-readable intent field
+    if "intent" in input:
+        return f"{label}: {str(input['intent'])[:50]}"
+    # query: direct search terms (searxng)
+    if "query" in input:
+        return f"{label}: {str(input['query'])[:50]}"
+    # searches: qmd search array — use first query string
+    if "searches" in input:
+        searches = input["searches"]
+        if isinstance(searches, list) and searches:
+            first = searches[0]
+            q = first.get("query") or first.get("q") if isinstance(first, dict) else str(first)
+            if q:
+                return f"{label}: {str(q)[:50]}"
+    # language: ctx_execute / ctx_execute_file — show language mode
+    if "language" in input:
+        lang = str(input["language"])
+        # For file analysis also show the filename
+        if "path" in input:
+            fname = Path(input["path"]).name
+            return f"{label}: {fname} ({lang})"
+        return f"{label}: {lang}"
+    # url: web fetch tools
+    if "url" in input:
+        return f"{label}: {str(input['url'])[:50]}"
+    # path: vault get — show just the filename
+    if "path" in input:
+        fname = Path(input["path"]).name
+        return f"{label}: {fname}"
+    # commands: ctx_batch_execute — show count
+    if "commands" in input:
+        n = len(input["commands"]) if isinstance(input["commands"], list) else "?"
+        return f"{label} ({n} cmds)"
+
+    return label
+
+
 def format_tool_header(name: str, input: dict, cwd: Path | None = None) -> str:
     """Format a one-line header for a tool use."""
     if name == ToolName.EDIT:
@@ -203,6 +276,8 @@ def format_tool_header(name: str, input: dict, cwd: Path | None = None) -> str:
         return "EnterPlanMode"
     elif name == ToolName.EXIT_PLAN_MODE:
         return "ExitPlanMode"
+    elif name.startswith("mcp__"):
+        return _format_mcp_header(name, input)
     else:
         return f"{name}"
 

@@ -25,6 +25,7 @@ from textual.binding import Binding
 from textual.containers import Vertical, Horizontal
 from textual.events import MouseUp
 from textual import work
+from textual.worker import Worker, WorkerState
 
 from claude_agent_sdk import (
     CLIConnectionError,
@@ -123,6 +124,43 @@ def _categorize_cli_error(e: CLIConnectionError) -> str:
     if "not found" in msg.lower():
         return "cli_not_found"
     return "unknown"
+
+
+def _kill_port(port: int) -> bool:
+    """Kill a stale ClaudeChic process holding the given port.
+
+    Only kills Python processes — won't touch unrelated services on the port.
+    Returns True if a process was killed, False otherwise.
+    """
+    import subprocess
+    try:
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if f":{port} " in line and "LISTENING" in line:
+                    pid = line.strip().split()[-1]
+                    if pid == "0" or pid == str(os.getpid()):
+                        return False
+                    # Only kill if it's a Python process (i.e. a stale ClaudeChic)
+                    names = subprocess.run(
+                        ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if "python" in names.stdout.lower():
+                        subprocess.run(
+                            ["cmd", "/c", f"taskkill /PID {pid} /F"],
+                            capture_output=True, timeout=5,
+                        )
+                        return True
+                    return False
+        else:
+            subprocess.run(["fuser", "-k", f"{port}/tcp"], capture_output=True, timeout=5)
+            return True
+    except Exception:
+        pass
+    return False
 
 
 class ChatApp(App):
@@ -625,6 +663,10 @@ class ChatApp(App):
         if os.environ.get("VIRTUAL_ENV"):
             env["VIRTUAL_ENV"] = ""
 
+        # Disable worktree isolation for subagents if worktrees are disabled in config
+        worktrees_enabled = CONFIG.get("worktree", {}).get("enabled", True)
+        disallowed = [] if worktrees_enabled else ["EnterWorktree", "ExitWorktree"]
+
         return ClaudeAgentOptions(
             permission_mode="bypassPermissions"
             if self._skip_permissions
@@ -640,6 +682,7 @@ class ChatApp(App):
             hooks=self._plan_mode_hooks(),
             enable_file_checkpointing=True,
             extra_args={"replay-user-messages": None},
+            disallowed_tools=disallowed,
         )
 
     async def on_mount(self) -> None:
@@ -675,7 +718,27 @@ class ChatApp(App):
         if self._remote_port:
             from claudechic.remote import start_server
 
-            await start_server(self, self._remote_port)
+            try:
+                await start_server(self, self._remote_port)
+            except OSError:
+                # Port held by previous session — kill it and retry
+                if _kill_port(self._remote_port):
+                    await asyncio.sleep(0.5)
+                    try:
+                        await start_server(self, self._remote_port)
+                    except OSError as e:
+                        log.warning(
+                            f"Remote control server failed on port {self._remote_port}: {e}"
+                        )
+                        self.notify(
+                            f"Remote port {self._remote_port} already in use — remote control disabled",
+                            severity="warning",
+                        )
+                else:
+                    self.notify(
+                        f"Remote port {self._remote_port} already in use — remote control disabled",
+                        severity="warning",
+                    )
 
         # Register themes (chic default + light variant + user-defined from config)
         self.register_theme(CHIC_THEME)
@@ -744,7 +807,7 @@ class ChatApp(App):
             CONFIG["theme"] = theme
             save_config()
 
-    @work(exclusive=True, group="connect")
+    @work(exclusive=True, group="connect", exit_on_error=False)
     async def _connect_initial_client(self) -> None:
         """Connect SDK for the initial agent."""
         if self.agent_mgr is None or self.agent_mgr.active is None:
@@ -858,18 +921,19 @@ class ChatApp(App):
                 base.append(f"/agent close {agent.name}")
 
         # Add current worktrees
-        try:
-            from claudechic.features.worktree import list_worktrees
+        if CONFIG.get("worktree", {}).get("enabled", True):
+            try:
+                from claudechic.features.worktree import list_worktrees
 
-            for wt in list_worktrees():
-                if not wt.is_main:
-                    base.append(f"/worktree {wt.branch}")
-        except Exception:
-            pass  # Not a git repo or git not available
+                for wt in list_worktrees():
+                    if not wt.is_main:
+                        base.append(f"/worktree {wt.branch}")
+            except Exception:
+                pass  # Not a git repo or git not available
 
         autocomplete.slash_commands = base
 
-    @work(exclusive=True, group="file_index")
+    @work(exclusive=True, group="file_index", exit_on_error=False)
     async def _refresh_file_index(self) -> None:
         """Refresh the file index in the background."""
         if self.file_index:
@@ -951,7 +1015,7 @@ class ChatApp(App):
             chat_view._render_full()
             self.call_after_refresh(chat_view.scroll_if_tailing)
 
-    @work(group="refresh_context", exclusive=True)
+    @work(group="refresh_context", exclusive=True, exit_on_error=False)
     async def refresh_context(self) -> None:
         """Update context bar from session file (no API call)."""
         agent = self._agent
@@ -1904,6 +1968,8 @@ class ChatApp(App):
 
     def _populate_worktrees(self) -> None:
         """Populate sidebar with ghost worktrees for feature branches."""
+        if not CONFIG.get("worktree", {}).get("enabled", True):
+            return
         try:
             worktrees = list_worktrees()
         except Exception:
@@ -2198,6 +2264,14 @@ class ChatApp(App):
 
         self.notify(f"Agent '{agent_name}' closed")
 
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Show a notification instead of crashing when a worker fails."""
+        if event.state == WorkerState.ERROR and event.worker.error:
+            error = event.worker.error
+            msg = str(error) or type(error).__name__
+            log.error("Worker %s failed: %s", event.worker.name, msg, exc_info=error)
+            self.notify(msg, title="Error", severity="error", timeout=10)
+
     def on_app_focus(self) -> None:
         if self._chat_input:
             self._chat_input.focus()
@@ -2224,6 +2298,21 @@ class ChatApp(App):
 
             for path in images:
                 self._attach_image(path)
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Fallback: raw clipboard image (e.g. Win+Shift+S screenshot)
+        clipboard_image = self._chat_input._grab_clipboard_image()
+        if clipboard_image:
+            now = time.time()
+            last = self._chat_input._last_image_paste
+            if last and now - last[1] < 0.5:
+                event.prevent_default()
+                event.stop()
+                return
+            self._chat_input._last_image_paste = ("__clipboard__", now)
+            self._attach_image(clipboard_image)
             event.prevent_default()
             event.stop()
 

@@ -42,6 +42,20 @@ COLLAPSE_BY_DEFAULT = {
     ToolName.SKILL,
 }
 
+# MCP tool name prefixes to always collapse — configurable via
+# collapse-tool-prefixes in ~/.claude/.claudechic.yaml
+_DEFAULT_COLLAPSE_PREFIXES = [
+    "mcp__plugin_context-mode",
+    "mcp__searxng",
+]
+_COLLAPSE_PREFIXES = tuple(
+    CONFIG.get("collapse-tool-prefixes") or _DEFAULT_COLLAPSE_PREFIXES
+)
+
+
+def _collapse_by_default(tool_name: str) -> bool:
+    return tool_name in COLLAPSE_BY_DEFAULT or tool_name.startswith(_COLLAPSE_PREFIXES)
+
 # How many recent tools to keep expanded (0 = collapse all)
 RECENT_TOOLS_EXPANDED = CONFIG.get("recent-tools-expanded", 2)
 
@@ -291,7 +305,7 @@ class ChatView(AutoHideScroll):
         from claude_agent_sdk import ToolUseBlock
 
         block = ToolUseBlock(id=tool.id, name=tool.name, input=tool.input)
-        should_collapse = collapsed or tool.name in COLLAPSE_BY_DEFAULT
+        should_collapse = collapsed or _collapse_by_default(tool.name)
         cwd = self._agent.cwd if self._agent else None
 
         if tool.name == ToolName.TASK:
@@ -408,7 +422,7 @@ class ChatView(AutoHideScroll):
                 old.collapse()
 
             # Create widget based on tool type
-            collapsed = RECENT_TOOLS_EXPANDED == 0 or tool.name in COLLAPSE_BY_DEFAULT
+            collapsed = RECENT_TOOLS_EXPANDED == 0 or _collapse_by_default(tool.name)
             cwd = self._agent.cwd if self._agent else None
             if tool.name == ToolName.TASK:
                 widget = TaskWidget(block, collapsed=collapsed, cwd=cwd)

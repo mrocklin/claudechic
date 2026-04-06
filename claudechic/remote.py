@@ -263,6 +263,30 @@ async def handle_key(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def handle_attach_image(request: web.Request) -> web.Response:
+    """Attach an image file to the active agent's pending images.
+
+    Body: {"path": "/absolute/path/to/image.png"}
+
+    Used by ShareX custom action to auto-attach captures without manual paste.
+    """
+    if _app is None:
+        return web.json_response({"error": "App not initialized"}, status=500)
+
+    try:
+        data = await request.json()
+        path_str = data.get("path")
+        if not path_str:
+            return web.json_response({"error": "Missing 'path' field"}, status=400)
+        path = Path(path_str)
+        if not path.exists():
+            return web.json_response({"error": f"File not found: {path}"}, status=404)
+        _app._attach_image(path)
+        return web.json_response({"ok": True, "filename": path.name})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def handle_exit(request: web.Request) -> web.Response:  # noqa: ARG001
     """Exit the app cleanly. Use this before restarting."""
     if _app is None:
@@ -291,6 +315,7 @@ async def start_server(app: ChatApp, port: int) -> None:
     webapp.router.add_get("/status", handle_status)
     webapp.router.add_post("/exit", handle_exit)
     webapp.router.add_post("/key", handle_key)
+    webapp.router.add_post("/attach-image", handle_attach_image)
 
     runner = web.AppRunner(webapp)
     await runner.setup()

@@ -79,11 +79,16 @@ def main():
 
     Console().control(Control.title(f"Claude Chic · {Path.cwd().name}"))
 
+    # Fall through to config if --remote-port not explicitly set
+    from claudechic.config import CONFIG
+
+    remote_port = args.remote_port or CONFIG.get("remote_port", 0)
+
     try:
         app = ChatApp(
             resume_session_id=resume_id,
             initial_prompt=initial_prompt,
-            remote_port=args.remote_port,
+            remote_port=remote_port,
             skip_permissions=args.dangerously_skip_permissions,
             theme_override=args.theme,
         )

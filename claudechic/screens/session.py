@@ -103,7 +103,7 @@ class SessionScreen(Screen[str | None]):
         """Return to chat without selecting a session."""
         self.dismiss(None)
 
-    async def _fetch_sessions(self, search: str) -> list[tuple[str, str, float, int]]:
+    async def _fetch_sessions(self, search: str) -> list[tuple[str, str, float, int, str]]:
         from claudechic.sessions import get_recent_sessions
 
         return await get_recent_sessions(search=search, cwd=self._cwd)
@@ -115,8 +115,8 @@ class SessionScreen(Screen[str | None]):
         sessions = await self._fetch_sessions(search)
         list_view = self.query_one("#session-list", ListView)
         list_view.clear()
-        for session_id, title, mtime, msg_count in sessions:
-            list_view.append(SessionItem(session_id, title, mtime, msg_count))
+        for session_id, title, mtime, msg_count, last_msg in sessions:
+            list_view.append(SessionItem(session_id, title, mtime, msg_count, last_msg))
         if sessions:
             list_view.index = 0
 

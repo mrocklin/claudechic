@@ -34,6 +34,9 @@ def _load() -> tuple[dict, bool]:
         config.setdefault("experimental", {})
         config.setdefault("worktree", {})
         config["worktree"].setdefault("path_template", None)
+        config["worktree"].setdefault("enabled", True)
+        config.setdefault("remote_port", 0)
+        config.setdefault("collapse-tool-prefixes", None)  # None = use built-in defaults
         # Migrate legacy vim key to vi-mode
         if "vim" in config:
             config["vi-mode"] = config.pop("vim")
