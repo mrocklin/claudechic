@@ -16,6 +16,7 @@ from claudechic.widgets import (
     ProcessPanel,
     BackgroundProcess,
     ModelPrompt,
+    EffortPrompt,
     StatusFooter,
     ContextBar,
 )
@@ -233,6 +234,46 @@ async def test_model_prompt_escape():
         await pilot.press("escape")
         result = await prompt.wait()
 
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_effort_prompt_selection():
+    """EffortPrompt selects an effort level by number key."""
+    app = WidgetTestApp(lambda: EffortPrompt(current_value="medium"))
+    async with app.run_test() as pilot:
+        prompt = app.query_one(EffortPrompt)
+        # medium is index 1
+        assert prompt.selected_idx == 1
+        # Navigate to high (index 2) and select via number key
+        await pilot.press("3")
+        result = await prompt.wait()
+    assert result == "high"
+
+
+@pytest.mark.asyncio
+async def test_effort_prompt_xhigh_initial():
+    """EffortPrompt lands on xhigh when that's the current value.
+
+    Guards against a future 'fix' that drops xhigh from OPTIONS because
+    the SDK's Literal type doesn't list it.
+    """
+    app = WidgetTestApp(lambda: EffortPrompt(current_value="xhigh"))
+    async with app.run_test():
+        prompt = app.query_one(EffortPrompt)
+        # xhigh is the 4th option (index 3)
+        assert prompt.selected_idx == 3
+        assert prompt.OPTIONS[prompt.selected_idx][0] == "xhigh"
+
+
+@pytest.mark.asyncio
+async def test_effort_prompt_escape():
+    """EffortPrompt returns None on escape."""
+    app = WidgetTestApp(lambda: EffortPrompt(current_value="high"))
+    async with app.run_test() as pilot:
+        prompt = app.query_one(EffortPrompt)
+        await pilot.press("escape")
+        result = await prompt.wait()
     assert result is None
 
 

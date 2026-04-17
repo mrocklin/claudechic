@@ -184,6 +184,7 @@ class Agent:
         self.session_allowed_tools: set[str] = set()  # Tools allowed for this session
         self._pending_followup: str | None = None  # Auto-send after current response
         self.model: str | None = None  # Model override (None = SDK default)
+        self.effort: str | None = None  # Effort level (low/medium/high/xhigh/max)
 
         # Worktree finish state (for /worktree finish flow)
         self.finish_state: FinishState | None = None
@@ -918,9 +919,11 @@ Key Rules:
             # Fetch plan path when entering plan mode
             if mode == "plan":
                 await self.ensure_plan_path()
-            # Only call SDK if connected (client exists and has active connection)
-            if self.client and self.session_id:
-                await self.client.set_permission_mode(mode)
+            # Only call SDK if connected (client exists and has active connection).
+            # "planSwarm" is claudechic-specific; skip SDK call for it since the
+            # SDK's PermissionMode Literal doesn't include it.
+            if self.client and self.session_id and mode != "planSwarm":
+                await self.client.set_permission_mode(mode)  # type: ignore[arg-type]
             if self.observer:
                 self.observer.on_permission_mode_changed(self)
 

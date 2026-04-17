@@ -162,6 +162,7 @@ class AgentManager:
         *,
         resume: str | None = None,
         model: str | None = None,
+        effort: str | None = None,
     ) -> None:
         """Connect an existing unconnected agent to the SDK.
 
@@ -171,10 +172,16 @@ class AgentManager:
             agent: The agent to connect (must be in self.agents)
             resume: Session ID to resume
             model: Model override (None = SDK default)
+            effort: Effort level (None = SDK default)
         """
         agent.model = model
+        agent.effort = effort
         options = self._options_factory(
-            cwd=agent.cwd, resume=resume, agent_name=agent.name, model=model
+            cwd=agent.cwd,
+            resume=resume,
+            agent_name=agent.name,
+            model=model,
+            effort=effort,
         )
         await agent.connect(options, resume=resume)
 

@@ -84,6 +84,7 @@ from claudechic.widgets.prompts import (
     SelectionPrompt,
     QuestionPrompt,
     ModelPrompt,
+    EffortPrompt,
     WorktreePrompt,
     UncommittedChangesPrompt,
 )
@@ -155,6 +156,7 @@ __all__ = [
     "SelectionPrompt",
     "QuestionPrompt",
     "ModelPrompt",
+    "EffortPrompt",
     "WorktreePrompt",
     "UncommittedChangesPrompt",
 ]

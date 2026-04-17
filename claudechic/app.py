@@ -94,7 +94,7 @@ from claudechic.widgets.layout.footer import (
     ModelLabel,
     StatusFooter,
 )
-from claudechic.widgets.prompts import ModelPrompt
+from claudechic.widgets.prompts import EffortPrompt, ModelPrompt
 from claudechic.errors import setup_logging  # noqa: F401 - used at startup
 from claudechic.errors import set_notify_callback as set_log_notify_callback
 from claudechic.profiling import profile
@@ -610,6 +610,7 @@ class ChatApp(App):
         resume: str | None = None,
         agent_name: str | None = None,
         model: str | None = None,
+        effort: str | None = None,
     ) -> ClaudeAgentOptions:
         """Create SDK options with common settings.
 
@@ -634,6 +635,7 @@ class ChatApp(App):
             cwd=cwd,
             resume=resume,
             model=model,
+            effort=effort,  # type: ignore[arg-type]  # SDK Literal lags CLI (missing "xhigh")
             mcp_servers={"chic": create_chic_server(caller_name=agent_name)},
             include_partial_messages=True,
             stderr=self._handle_sdk_stderr,
@@ -771,7 +773,11 @@ class ChatApp(App):
 
         # Connect the agent to SDK
         options = self._make_options(
-            cwd=agent.cwd, resume=resume, agent_name=agent.name, model=agent.model
+            cwd=agent.cwd,
+            resume=resume,
+            agent_name=agent.name,
+            model=agent.model,
+            effort=agent.effort,
         )
         try:
             await agent.connect(options, resume=resume)
@@ -1747,6 +1753,7 @@ class ChatApp(App):
                     resume=resume_id,
                     agent_name=agent.name,
                     model=agent.model,
+                    effort=agent.effort,
                 )
             )
 
@@ -1928,7 +1935,11 @@ class ChatApp(App):
         """Disconnect and reconnect an agent to reload its session."""
         await agent.disconnect()
         options = self._make_options(
-            cwd=agent.cwd, resume=session_id, agent_name=agent.name, model=agent.model
+            cwd=agent.cwd,
+            resume=session_id,
+            agent_name=agent.name,
+            model=agent.model,
+            effort=agent.effort,
         )
         await agent.connect(options, resume=session_id)
 
@@ -1943,7 +1954,10 @@ class ChatApp(App):
             chat_view.clear()
         await agent.disconnect()
         options = self._make_options(
-            cwd=agent.cwd, agent_name=agent.name, model=agent.model
+            cwd=agent.cwd,
+            agent_name=agent.name,
+            model=agent.model,
+            effort=agent.effort,
         )
         await agent.connect(options)
         self.refresh_context()
@@ -1988,7 +2002,10 @@ class ChatApp(App):
             self.notify(f"Switching to {model}...")
             await agent.disconnect()
             options = self._make_options(
-                cwd=agent.cwd, agent_name=agent.name, model=model
+                cwd=agent.cwd,
+                agent_name=agent.name,
+                model=model,
+                effort=agent.effort,
             )
             await agent.connect(options)
 
@@ -2017,6 +2034,58 @@ class ChatApp(App):
 
         if result and result != agent.model:
             self._set_agent_model(result)
+
+    @work(group="effort_switch", exclusive=True, exit_on_error=False)
+    async def _set_agent_effort(self, effort: str) -> None:
+        """Set effort for active agent and reconnect."""
+        agent = self._agent
+        if not agent:
+            self.notify("No active agent", severity="warning")
+            return
+        if effort == agent.effort:
+            return
+        old_effort = agent.effort or "default"
+        agent.effort = effort
+        self.run_worker(
+            capture(
+                "effort_changed",
+                from_effort=old_effort,
+                to_effort=effort,
+                agent_id=agent.analytics_id,
+            )
+        )
+        if agent.client:
+            self.notify(f"Switching effort to {effort}...")
+            await agent.disconnect()
+            options = self._make_options(
+                cwd=agent.cwd,
+                agent_name=agent.name,
+                model=agent.model,
+                effort=effort,
+            )
+            await agent.connect(options)
+
+    @work(group="effort_prompt", exclusive=True, exit_on_error=False)
+    async def _handle_effort_prompt(self) -> None:
+        """Show effort selection prompt and handle result for active agent."""
+        from textual.containers import Center
+
+        agent = self._agent
+        if not agent:
+            self.notify("No active agent", severity="warning")
+            return
+
+        prompt = EffortPrompt(current_value=agent.effort)
+        container = Center(prompt, id="effort-modal")
+        self.mount(container)
+
+        try:
+            result = await prompt.wait()
+        finally:
+            container.remove()
+
+        if result and result != agent.effort:
+            self._set_agent_effort(result)
 
     # exclusive=False allows parallel agent creation (needed for plan-swarm).
     # Race on switch_to is acceptable - last created wins for active agent.
@@ -2126,7 +2195,10 @@ class ChatApp(App):
             # Reconnect with fresh session (like /clear)
             await agent.disconnect()
             options = self._make_options(
-                cwd=agent.cwd, agent_name=agent.name, model=agent.model
+                cwd=agent.cwd,
+                agent_name=agent.name,
+                model=agent.model,
+                effort=agent.effort,
             )
             await agent.connect(options)
 

@@ -427,6 +427,60 @@ class ModelPrompt(BasePrompt):
         return self._result_value
 
 
+class EffortPrompt(BasePrompt):
+    """Prompt for selecting an effort level.
+
+    Effort tunes speed vs. intelligence: lower means fewer tool calls, less
+    preamble, terser confirmations; higher means deeper reasoning and more
+    thinking tokens. See the matching `# type: ignore` in
+    `ChatApp._make_options` for the SDK/CLI type-lag note.
+    """
+
+    # Source of truth for supported effort levels. Used by `/effort <level>`
+    # validation in commands.py — keep in sync if we add values.
+    OPTIONS: tuple[tuple[str, str], ...] = (
+        ("low", "Fewer tool calls, terse output"),
+        ("medium", "Balanced"),
+        ("high", "Deeper reasoning (often the sweet spot)"),
+        ("xhigh", "Extra deep reasoning"),
+        ("max", "Maximum thinking budget"),
+    )
+
+    def __init__(self, current_value: str | None = None) -> None:
+        super().__init__()
+        self.current_value = current_value
+        self.selected_idx = 0
+        for i, (value, _) in enumerate(self.OPTIONS):
+            if value == current_value:
+                self.selected_idx = i
+                break
+
+    def compose(self) -> ComposeResult:
+        yield Static("Select Effort Level", classes="prompt-title")
+        for i, (value, desc) in enumerate(self.OPTIONS):
+            current = " *" if value == self.current_value else ""
+            classes = "prompt-option"
+            if i == self.selected_idx:
+                classes += " selected"
+            yield Static(
+                f"{i + 1}. {value} — {desc}{current}",
+                classes=classes,
+                id=f"opt-{i}",
+                markup=False,
+            )
+
+    def _total_options(self) -> int:
+        return len(self.OPTIONS)
+
+    def _select_option(self, idx: int) -> None:
+        self._resolve(self.OPTIONS[idx][0])
+
+    async def wait(self) -> str | None:
+        """Wait for selection. Returns effort value or None if cancelled."""
+        await super().wait()
+        return self._result_value
+
+
 class WorktreePrompt(BasePrompt):
     """Prompt for selecting or creating worktrees."""
 
