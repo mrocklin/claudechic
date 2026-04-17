@@ -258,13 +258,24 @@ def _expand_worktree_path(template: str, repo_name: str, feature_name: str) -> P
     return path.resolve()
 
 
-def start_worktree(feature_name: str) -> tuple[bool, str, Path | None]:
+def start_worktree(
+    feature_name: str, base: str | None = None
+) -> tuple[bool, str, Path | None]:
     """Create a worktree for the given feature.
+
+    When `base` is given, git runs with cwd=main worktree so the ref resolves
+    deterministically regardless of caller cwd. When `base` is None, HEAD is
+    resolved from the process cwd (legacy `/worktree` behavior).
 
     Returns (success, message, worktree_path).
     """
     try:
-        repo_name = get_repo_name()
+        main_wt = get_main_worktree()
+
+        # Prefer the main worktree's dir name over `git rev-parse --show-toplevel`
+        # so we don't inherit "repo-feature-a" when the caller happens to be in
+        # a feature worktree (same cwd-drift family as the base-ref bug).
+        repo_name = main_wt[0].name if main_wt else get_repo_name()
         path_template = CONFIG.get("worktree", {}).get("path_template")
 
         if path_template:
@@ -276,18 +287,34 @@ def start_worktree(feature_name: str) -> tuple[bool, str, Path | None]:
             except ValueError as e:
                 return False, str(e), None
         else:
-            main_wt = get_main_worktree()
-            if main_wt:
-                parent_dir = main_wt[0].parent
-            else:
-                parent_dir = Path.cwd().parent
+            parent_dir = main_wt[0].parent if main_wt else Path.cwd().parent
             worktree_dir = parent_dir / f"{repo_name}-{feature_name}"
 
         if worktree_dir.exists():
             return False, f"Directory {worktree_dir} already exists", None
 
+        # When a base is given, the caller wants deterministic ref resolution;
+        # silently falling back to cwd-of-process would re-introduce the bug.
+        if base and not main_wt:
+            return (
+                False,
+                "Cannot resolve base ref: main worktree not found",
+                None,
+            )
+        base_ref = base or "HEAD"
+        git_cwd: Path | None = main_wt[0] if base and main_wt else None
+
         subprocess.run(
-            ["git", "worktree", "add", "-b", feature_name, str(worktree_dir), "HEAD"],
+            [
+                "git",
+                "worktree",
+                "add",
+                "-b",
+                feature_name,
+                str(worktree_dir),
+                base_ref,
+            ],
+            cwd=git_cwd,
             check=True,
             capture_output=True,
             text=True,
@@ -295,9 +322,8 @@ def start_worktree(feature_name: str) -> tuple[bool, str, Path | None]:
 
         # Symlink .claude/ from main worktree so hooks, skills, and
         # local settings carry over (they're typically gitignored).
-        main_wt_info = get_main_worktree()
-        if main_wt_info:
-            source_claude_dir = main_wt_info[0] / ".claude"
+        if main_wt:
+            source_claude_dir = main_wt[0] / ".claude"
             if source_claude_dir.is_dir():
                 target = worktree_dir / ".claude"
                 if not target.exists():

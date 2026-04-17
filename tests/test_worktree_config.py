@@ -1,5 +1,6 @@
 """Tests for worktree path template expansion."""
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -190,3 +191,170 @@ class TestStartWorktreeWithConfig:
         assert success
         assert path == expected_path
         assert expected_path.parent.exists()
+
+
+class TestStartWorktreeBase:
+    """Test start_worktree()'s `base` parameter for deterministic forking."""
+
+    def test_default_base_uses_head_and_no_explicit_cwd(self, mock_worktree_deps):
+        """Without a base, git resolves HEAD from the caller's cwd (legacy)."""
+        mocks = mock_worktree_deps
+        mocks["get_repo"].return_value = "test-repo"
+        mocks["get_main"].return_value = (Path("/original/test-repo"), "main")
+        mocks["config"].get.return_value = {}
+
+        success, _, _ = start_worktree("wt-a")
+
+        assert success
+        call = mocks["run"].call_args
+        args = call.args[0]
+        assert args[-1] == "HEAD"
+        assert call.kwargs.get("cwd") is None
+
+    def test_explicit_base_is_passed_to_git(self, mock_worktree_deps):
+        """With a base, it becomes the final arg to `git worktree add`."""
+        mocks = mock_worktree_deps
+        mocks["get_repo"].return_value = "test-repo"
+        mocks["get_main"].return_value = (Path("/original/test-repo"), "main")
+        mocks["config"].get.return_value = {}
+
+        success, _, _ = start_worktree("wt-a", base="main")
+
+        assert success
+        args = mocks["run"].call_args.args[0]
+        assert args[-1] == "main"
+
+    def test_explicit_base_anchors_cwd_to_main_worktree(self, mock_worktree_deps):
+        """With a base, git is run with cwd=main worktree so refs resolve
+        deterministically across parallel spawns."""
+        mocks = mock_worktree_deps
+        mocks["get_repo"].return_value = "test-repo"
+        main_path = Path("/original/test-repo")
+        mocks["get_main"].return_value = (main_path, "main")
+        mocks["config"].get.return_value = {}
+
+        success, _, _ = start_worktree("wt-a", base="main")
+
+        assert success
+        assert mocks["run"].call_args.kwargs.get("cwd") == main_path
+
+    def test_parallel_spawns_all_fork_from_same_base(self, mock_worktree_deps):
+        """Two sibling worktrees both fork from the given base, not from each
+        other — regression test for the ancestor-chain bug."""
+        mocks = mock_worktree_deps
+        mocks["get_repo"].return_value = "test-repo"
+        main_path = Path("/original/test-repo")
+        mocks["get_main"].return_value = (main_path, "main")
+        mocks["config"].get.return_value = {}
+
+        start_worktree("wt-a", base="main")
+        start_worktree("wt-b", base="main")
+
+        assert mocks["run"].call_count == 2
+        for call in mocks["run"].call_args_list:
+            assert call.args[0][-1] == "main"
+            assert call.kwargs.get("cwd") == main_path
+
+    def test_explicit_base_without_main_worktree_fails_loudly(self, mock_worktree_deps):
+        """If the caller asks for deterministic resolution but we can't find
+        the main worktree, fail rather than silently falling back to cwd."""
+        mocks = mock_worktree_deps
+        mocks["get_repo"].return_value = "test-repo"
+        mocks["get_main"].return_value = None
+        mocks["config"].get.return_value = {}
+
+        success, message, path = start_worktree("wt-a", base="main")
+
+        assert not success
+        assert path is None
+        assert "main worktree not found" in message
+        mocks["run"].assert_not_called()
+
+
+def _run_git(cwd: Path, *args: str) -> str:
+    """Run git in cwd; return stdout stripped."""
+    result = subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+    )
+    return result.stdout.strip()
+
+
+class TestStartWorktreeIntegration:
+    """Real-git end-to-end tests that actually run `git worktree add`.
+
+    Complements the mock-based tests: mocks prove the invocation shape;
+    these prove the invocation actually produces the topology we want.
+    """
+
+    @pytest.fixture
+    def repo(self, tmp_path):
+        """Init a real git repo at tmp_path/main-repo with two commits.
+
+        The second commit advances `main` past the detached tip of an older
+        ref so we can tell "forked from main" apart from "forked from HEAD".
+        Yields (repo_path, main_sha).
+        """
+        repo_path = tmp_path / "main-repo"
+        repo_path.mkdir()
+        _run_git(repo_path, "init", "-b", "main")
+        _run_git(repo_path, "config", "user.email", "test@test")
+        _run_git(repo_path, "config", "user.name", "test")
+        (repo_path / "a").write_text("a")
+        _run_git(repo_path, "add", "a")
+        _run_git(repo_path, "commit", "-m", "first")
+        (repo_path / "b").write_text("b")
+        _run_git(repo_path, "add", "b")
+        _run_git(repo_path, "commit", "-m", "second")
+        main_sha = _run_git(repo_path, "rev-parse", "main")
+        yield repo_path, main_sha
+
+    def test_parallel_spawns_produce_siblings_off_main(self, repo, tmp_path):
+        """Regression test for the ancestor-chain bug: two spawns with
+        base='main' must both have main's tip as their parent, not each
+        other's tip."""
+        repo_path, main_sha = repo
+        template = f"{tmp_path}/wts/${{repo_name}}/${{branch_name}}"
+
+        with (
+            patch("claudechic.features.worktree.git.CONFIG") as cfg,
+            patch(
+                "claudechic.features.worktree.git.get_main_worktree",
+                return_value=(repo_path, "main"),
+            ),
+        ):
+            cfg.get.return_value = {"path_template": template}
+            ok_a, _, _ = start_worktree("wt-a", base="main")
+            ok_b, _, _ = start_worktree("wt-b", base="main")
+
+        assert ok_a and ok_b
+        sha_a = _run_git(repo_path, "rev-parse", "wt-a")
+        sha_b = _run_git(repo_path, "rev-parse", "wt-b")
+        assert sha_a == main_sha
+        assert sha_b == main_sha
+
+    def test_spawn_ignores_caller_process_cwd(self, repo, tmp_path, monkeypatch):
+        """With base='HEAD', the ref must resolve against the main worktree,
+        not the caller's cwd. Uses a cwd-dependent ref so a regression (e.g.
+        dropping the `cwd=` kwarg) would actually change the resolved sha."""
+        repo_path, main_sha = repo
+        # Create a sibling worktree at an older sha and chdir into it.
+        other = tmp_path / "other"
+        _run_git(repo_path, "worktree", "add", "-b", "other", str(other), "HEAD~1")
+        monkeypatch.chdir(other)
+        other_sha = _run_git(other, "rev-parse", "HEAD")
+        assert other_sha != main_sha
+
+        template = f"{tmp_path}/wts/${{repo_name}}/${{branch_name}}"
+        with (
+            patch("claudechic.features.worktree.git.CONFIG") as cfg,
+            patch(
+                "claudechic.features.worktree.git.get_main_worktree",
+                return_value=(repo_path, "main"),
+            ),
+        ):
+            cfg.get.return_value = {"path_template": template}
+            ok, _, _ = start_worktree("wt-a", base="HEAD")
+
+        assert ok
+        # HEAD resolved from the main worktree → main_sha, not other_sha.
+        assert _run_git(repo_path, "rev-parse", "wt-a") == main_sha

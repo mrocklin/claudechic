@@ -180,7 +180,11 @@ def _make_spawn_worktree(caller_name: str | None = None):
 
     @tool(
         "spawn_worktree",
-        "Create a git worktree (feature branch) with a new agent. Useful for isolated feature development.",
+        "Create a git worktree (feature branch) with a new agent. Useful for "
+        "isolated feature development. The new branch is forked from "
+        "`base_branch` (e.g. 'main') resolved against the main worktree, so "
+        "sibling worktrees created in the same session do not stack on each "
+        "other.",
         {"name": str, "base_branch": str, "prompt": str},
     )
     async def spawn_worktree(args: dict[str, Any]) -> dict[str, Any]:
@@ -191,9 +195,12 @@ def _make_spawn_worktree(caller_name: str | None = None):
 
         name = args["name"]
         prompt = args.get("prompt")
+        # `base_branch` is required by the schema; MCP validation rejects
+        # calls that omit it.
+        base_branch = args["base_branch"]
 
         # Create the worktree
-        success, message, wt_path = start_worktree(name)
+        success, message, wt_path = start_worktree(name, base=base_branch)
         if not success or wt_path is None:
             return _error_response(f"Error creating worktree: {message}")
 
