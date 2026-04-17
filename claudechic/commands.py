@@ -94,6 +94,7 @@ COMMANDS: list[tuple[str, str, list[str]]] = [
     ("/compactish", "Compact session to reduce context", []),
     ("/usage", "Show API rate limit usage", []),
     ("/model", "Change model", []),
+    ("/effort", "Set thinking effort level", []),
     ("/vim", "Toggle vi mode for input", []),
     ("/processes", "Show background processes", []),
     ("/reviews", "Show roborev reviews", []),
@@ -147,6 +148,8 @@ def get_help_commands() -> list[tuple[str, str]]:
             display_name = "/plan-swarm"
         elif name == "/rewind":
             display_name = "/rewind [index]"
+        elif name == "/effort":
+            display_name = "/effort [low|medium|high|xhigh|max]"
         result.append((display_name, desc))
     return result
 
@@ -230,6 +233,26 @@ def handle_command(app: "ChatApp", prompt: str) -> bool:
                 )
             else:
                 app._set_agent_model(model)
+        return True
+
+    if cmd == "/effort" or cmd.startswith("/effort "):
+        _track_command(app, "effort")
+        parts = cmd.split(maxsplit=1)
+        if len(parts) == 1:
+            # No argument - show current effort
+            agent = app._agent
+            current = agent.effort if agent else None
+            app.notify(f"Current effort: {current or 'default'}")
+        else:
+            effort = parts[1].lower()
+            valid_efforts = {"low", "medium", "high", "xhigh", "max"}
+            if effort not in valid_efforts:
+                app.notify(
+                    f"Invalid effort '{effort}'. Use: low, medium, high, xhigh, max",
+                    severity="error",
+                )
+            else:
+                app._set_agent_effort(effort)
         return True
 
     if cmd == "/exit":

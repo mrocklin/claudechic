@@ -98,6 +98,7 @@ class StatusFooter(Static):
     can_focus = False
     permission_mode = reactive("default")  # default, acceptEdits, plan
     model = reactive("")
+    effort = reactive("")
     branch = reactive("")
 
     async def on_mount(self) -> None:
@@ -126,10 +127,21 @@ class StatusFooter(Static):
         if label := self.query_one_optional("#branch-label", Static):
             label.update(f"⎇ {value}" if value else "")
 
+    def _render_model_label(self) -> None:
+        """Update model label combining model and effort."""
+        if label := self.query_one_optional("#model-label", ModelLabel):
+            text = self.model
+            if self.effort:
+                text = f"{text} · {self.effort}" if text else self.effort
+            label.update(text)
+
     def watch_model(self, value: str) -> None:
         """Update model label when model changes."""
-        if label := self.query_one_optional("#model-label", ModelLabel):
-            label.update(value if value else "")
+        self._render_model_label()
+
+    def watch_effort(self, value: str) -> None:
+        """Update model label when effort changes."""
+        self._render_model_label()
 
     def watch_permission_mode(self, value: str) -> None:
         """Update permission mode label when setting changes."""

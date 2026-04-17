@@ -610,6 +610,7 @@ class ChatApp(App):
         resume: str | None = None,
         agent_name: str | None = None,
         model: str | None = None,
+        effort: str | None = None,
     ) -> ClaudeAgentOptions:
         """Create SDK options with common settings.
 
@@ -634,6 +635,7 @@ class ChatApp(App):
             cwd=cwd,
             resume=resume,
             model=model,
+            effort=effort,
             mcp_servers={"chic": create_chic_server(caller_name=agent_name)},
             include_partial_messages=True,
             stderr=self._handle_sdk_stderr,
@@ -771,7 +773,7 @@ class ChatApp(App):
 
         # Connect the agent to SDK
         options = self._make_options(
-            cwd=agent.cwd, resume=resume, agent_name=agent.name, model=agent.model
+            cwd=agent.cwd, resume=resume, agent_name=agent.name, model=agent.model, effort=agent.effort
         )
         try:
             await agent.connect(options, resume=resume)
@@ -1747,6 +1749,7 @@ class ChatApp(App):
                     resume=resume_id,
                     agent_name=agent.name,
                     model=agent.model,
+                    effort=agent.effort,
                 )
             )
 
@@ -1928,7 +1931,7 @@ class ChatApp(App):
         """Disconnect and reconnect an agent to reload its session."""
         await agent.disconnect()
         options = self._make_options(
-            cwd=agent.cwd, resume=session_id, agent_name=agent.name, model=agent.model
+            cwd=agent.cwd, resume=session_id, agent_name=agent.name, model=agent.model, effort=agent.effort
         )
         await agent.connect(options, resume=session_id)
 
@@ -1943,7 +1946,7 @@ class ChatApp(App):
             chat_view.clear()
         await agent.disconnect()
         options = self._make_options(
-            cwd=agent.cwd, agent_name=agent.name, model=agent.model
+            cwd=agent.cwd, agent_name=agent.name, model=agent.model, effort=agent.effort
         )
         await agent.connect(options)
         self.refresh_context()
@@ -1975,6 +1978,11 @@ class ChatApp(App):
             return
         old_model = agent.model or "default"
         agent.model = model
+        # Haiku doesn't support extended thinking — clear effort if switching to it
+        if model == "haiku" and agent.effort:
+            agent.effort = ""
+            self.status_footer.effort = ""
+            self.notify("Effort cleared (haiku does not support extended thinking)")
         self.run_worker(
             capture(
                 "model_changed",
@@ -1989,6 +1997,28 @@ class ChatApp(App):
             await agent.disconnect()
             options = self._make_options(
                 cwd=agent.cwd, agent_name=agent.name, model=model
+            )
+            await agent.connect(options)
+
+    @work(group="effort_switch", exclusive=True, exit_on_error=False)
+    async def _set_agent_effort(self, effort: str) -> None:
+        """Set effort level for active agent and reconnect."""
+        agent = self._agent
+        if not agent:
+            self.notify("No active agent", severity="warning")
+            return
+        if agent.model == "haiku":
+            self.notify("Haiku does not support extended thinking", severity="error")
+            return
+        if effort == agent.effort:
+            return
+        agent.effort = effort
+        self.status_footer.effort = effort
+        if agent.client:
+            self.notify(f"Setting effort to {effort}...")
+            await agent.disconnect()
+            options = self._make_options(
+                cwd=agent.cwd, agent_name=agent.name, model=agent.model, effort=effort
             )
             await agent.connect(options)
 
@@ -2126,7 +2156,7 @@ class ChatApp(App):
             # Reconnect with fresh session (like /clear)
             await agent.disconnect()
             options = self._make_options(
-                cwd=agent.cwd, agent_name=agent.name, model=agent.model
+                cwd=agent.cwd, agent_name=agent.name, model=agent.model, effort=agent.effort
             )
             await agent.connect(options)
 
@@ -2226,6 +2256,15 @@ class ChatApp(App):
                 self._attach_image(path)
             event.prevent_default()
             event.stop()
+            return
+
+        # Empty paste may mean clipboard holds image data rather than text
+        if not event.text.strip():
+            path = self._chat_input._get_clipboard_image()
+            if path:
+                self._attach_image(path)
+                event.prevent_default()
+                event.stop()
 
     def on_key(self, event) -> None:
         if self.query(SelectionPrompt) or self.query(QuestionPrompt):
@@ -2351,6 +2390,7 @@ class ChatApp(App):
 
         # Update footer
         self.status_footer.permission_mode = new_agent.permission_mode
+        self.status_footer.effort = new_agent.effort or ""
         self._update_footer_model(new_agent.model)
 
         # Update todo panel and context
