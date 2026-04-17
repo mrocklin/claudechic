@@ -34,6 +34,16 @@ class ModelLabel(ClickableLabel):
         self.post_message(self.ModelChangeRequested())
 
 
+class EffortLabel(ClickableLabel):
+    """Clickable effort label. Shows current effort level, opens EffortPrompt on click."""
+
+    class EffortChangeRequested(Message):
+        """Emitted when user wants to change the effort level."""
+
+    def on_click(self, event) -> None:
+        self.post_message(self.EffortChangeRequested())
+
+
 class ViModeLabel(Static):
     """Shows current vim mode: INSERT, NORMAL, VISUAL."""
 
@@ -98,6 +108,8 @@ class StatusFooter(Static):
     can_focus = False
     permission_mode = reactive("default")  # default, acceptEdits, plan
     model = reactive("")
+    # "" = SDK default (shown muted), else low/medium/high/xhigh/max
+    effort = reactive("")
     branch = reactive("")
 
     async def on_mount(self) -> None:
@@ -111,6 +123,7 @@ class StatusFooter(Static):
         with Horizontal(id="footer-content"):
             yield ViModeLabel("", id="vi-mode-label", classes="hidden")
             yield ModelLabel("", id="model-label", classes="footer-label")
+            yield EffortLabel("default", id="effort-label", classes="footer-label")
             yield Static("·", classes="footer-sep")
             yield PermissionModeLabel(
                 "Auto-edit: off", id="permission-mode-label", classes="footer-label"
@@ -130,6 +143,12 @@ class StatusFooter(Static):
         """Update model label when model changes."""
         if label := self.query_one_optional("#model-label", ModelLabel):
             label.update(value if value else "")
+
+    def watch_effort(self, value: str) -> None:
+        """Update effort label. Shows "default" muted when unset, value elevated when set."""
+        if label := self.query_one_optional("#effort-label", EffortLabel):
+            label.update(value or "default")
+            label.set_class(bool(value), "elevated")
 
     def watch_permission_mode(self, value: str) -> None:
         """Update permission mode label when setting changes."""

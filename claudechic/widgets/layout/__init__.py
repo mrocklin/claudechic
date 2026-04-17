@@ -17,6 +17,7 @@ from claudechic.widgets.layout.sidebar import (
 from claudechic.widgets.layout.footer import (
     PermissionModeLabel,
     ModelLabel,
+    EffortLabel,
     StatusFooter,
 )
 from claudechic.widgets.layout.indicators import (
@@ -49,6 +50,7 @@ __all__ = [
     "SessionItem",
     "PermissionModeLabel",
     "ModelLabel",
+    "EffortLabel",
     "StatusFooter",
     "IndicatorWidget",
     "CPUBar",

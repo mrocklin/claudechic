@@ -59,6 +59,7 @@ from claudechic.config import CONFIG, NEW_INSTALL, save as save_config
 from claudechic.enums import AgentStatus, PermissionChoice, ToolName
 from claudechic.mcp import set_app, create_chic_server
 from claudechic.file_index import FileIndex
+from claudechic.formatting import trim_model_name
 from claudechic.history import append_to_history
 from claudechic.widgets import (
     ContextBar,
@@ -91,6 +92,7 @@ from claudechic.widgets import (
 from claudechic.widgets.layout.footer import (
     PermissionModeLabel,
     ModelLabel,
+    EffortLabel,
     StatusFooter,
 )
 from claudechic.widgets.prompts import EffortPrompt, ModelPrompt
@@ -823,6 +825,7 @@ class ChatApp(App):
                     # Update footer with current agent's model
                     agent = self._agent
                     self._update_footer_model(agent.model if agent else None)
+                    self.status_footer.effort = (agent.effort if agent else None) or ""
         except Exception as e:
             log.warning(f"Failed to fetch SDK commands: {e}")
         self._refresh_dynamic_completions()
@@ -1883,6 +1886,12 @@ class ChatApp(App):
         """Handle model label press - open model selector."""
         self._handle_model_prompt()
 
+    def on_effort_label_effort_change_requested(
+        self, event: EffortLabel.EffortChangeRequested
+    ) -> None:
+        """Handle effort label press - open effort selector."""
+        self._handle_effort_prompt()
+
     def _close_sidebar_overlay(self) -> None:
         """Close sidebar overlay if open."""
         if self._sidebar_overlay_open:
@@ -2056,6 +2065,7 @@ class ChatApp(App):
             return
         old_effort = agent.effort or "default"
         agent.effort = effort
+        self.status_footer.effort = effort or ""
         self.run_worker(
             capture(
                 "effort_changed",
@@ -2159,14 +2169,16 @@ class ChatApp(App):
             # Reset footer if no agents left (close() switches otherwise)
             if not self.agent_mgr.agents:
                 self.status_footer.model = ""
+                self.status_footer.effort = ""
             return
         finally:
             # Always remove the connecting indicator
             if connecting_indicator:
                 connecting_indicator.remove()
 
-        # Update footer with connected agent's model
+        # Update footer with connected agent's model and effort
         self._update_footer_model(agent.model)
+        self.status_footer.effort = agent.effort or ""
 
         if resume_id:
             await self._load_and_display_history(resume_id, cwd=cwd)
@@ -2434,6 +2446,7 @@ class ChatApp(App):
         # Update footer
         self.status_footer.permission_mode = new_agent.permission_mode
         self._update_footer_model(new_agent.model)
+        self.status_footer.effort = new_agent.effort or ""
 
         # Update todo panel and context
         self.todo_panel.update_todos(new_agent.todos)
@@ -2869,7 +2882,9 @@ class ChatApp(App):
         """Update footer to show agent's model."""
         if not self._available_models:
             # No model info yet - show raw value or empty
-            self.status_footer.model = model.capitalize() if model else ""
+            self.status_footer.model = (
+                trim_model_name(model.capitalize()) if model else ""
+            )
             return
         # Find matching model, or default if model is None
         active = self._available_models[0]
@@ -2885,7 +2900,7 @@ class ChatApp(App):
         model_name = (
             desc.split("·")[0].strip() if "·" in desc else active.get("displayName", "")
         )
-        self.status_footer.model = model_name
+        self.status_footer.model = trim_model_name(model_name)
 
     # ── Diff Mode ──────────────────────────────────────────────────────────────
 

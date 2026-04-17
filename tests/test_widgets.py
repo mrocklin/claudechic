@@ -18,6 +18,7 @@ from claudechic.widgets import (
     ModelPrompt,
     EffortPrompt,
     StatusFooter,
+    EffortLabel,
     ContextBar,
 )
 from claudechic.widgets.content.todo import TodoItem
@@ -482,6 +483,38 @@ async def test_status_footer_permission_mode():
         rendered = label.render()
         assert hasattr(rendered, "plain")
         assert "plan mode" in rendered.plain.lower()  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_status_footer_effort_label():
+    """Footer effort label shows 'default' muted when unset, value elevated when set."""
+    app = WidgetTestApp(lambda: StatusFooter())
+    async with app.run_test():
+        footer = app.query_one(StatusFooter)
+        label = footer.query_one("#effort-label", EffortLabel)
+
+        # Empty = shows "default", muted (no elevated class), visible
+        rendered = label.render()
+        assert "default" in rendered.plain  # type: ignore[union-attr]
+        assert not label.has_class("hidden")
+        assert not label.has_class("elevated")
+
+        # Any explicit value = elevated
+        footer.effort = "medium"
+        rendered = label.render()
+        assert "medium" in rendered.plain  # type: ignore[union-attr]
+        assert label.has_class("elevated")
+
+        footer.effort = "xhigh"
+        rendered = label.render()
+        assert "xhigh" in rendered.plain  # type: ignore[union-attr]
+        assert label.has_class("elevated")
+
+        # Reset to empty = back to muted "default"
+        footer.effort = ""
+        rendered = label.render()
+        assert "default" in rendered.plain  # type: ignore[union-attr]
+        assert not label.has_class("elevated")
 
 
 @pytest.mark.asyncio

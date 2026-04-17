@@ -89,6 +89,23 @@ def format_agent_prompt(prompt: str) -> tuple[str, bool]:
     return prompt, False
 
 
+def trim_model_name(name: str) -> str:
+    """Strip trailing qualifiers from a model display name.
+
+    Examples:
+        "Opus 4.7 with 1M context" -> "Opus 4.7"
+        "Sonnet 4.5 (beta)" -> "Sonnet 4.5"
+        "Haiku" -> "Haiku"
+    """
+    if not name:
+        return name
+    # Drop anything from " with " onwards (case-insensitive)
+    trimmed = re.split(r"\s+with\s+", name, maxsplit=1, flags=re.IGNORECASE)[0]
+    # Drop trailing parenthesized qualifiers like "(beta)" or "(experimental)"
+    trimmed = re.sub(r"\s*\([^)]*\)\s*$", "", trimmed)
+    return trimmed.strip()
+
+
 def make_relative(path: str, cwd: Path | None) -> str:
     """Make path relative to cwd if possible, otherwise return as-is."""
     if not cwd or not path:

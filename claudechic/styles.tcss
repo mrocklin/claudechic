@@ -85,6 +85,14 @@ ModelLabel:hover {
     background: $panel;
 }
 
+EffortLabel.elevated {
+    color: $text;
+}
+
+EffortLabel:hover {
+    background: $panel;
+}
+
 .footer-sep {
     color: $panel;
     width: auto;
