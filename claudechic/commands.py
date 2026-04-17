@@ -384,6 +384,7 @@ SDK_PASSTHROUGH_COMMANDS = frozenset(
         "/compact",
         "/context",
         "/init",
+        "/ultrareview",  # Cloud-based parallel multi-agent review (Claude Code 2.1.111+)
     }
 )
 
