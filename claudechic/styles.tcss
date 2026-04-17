@@ -114,6 +114,10 @@ EffortLabel:hover {
     color: $error;
 }
 
+.footer-label.auto-mode {
+    color: $success;
+}
+
 /* Shared block styling - all content blocks */
 ChatMessage, BaseToolWidget, ThinkingIndicator, ErrorMessage, SystemInfo, #input-container {
     background: transparent;

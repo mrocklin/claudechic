@@ -52,7 +52,12 @@ from claudechic.features.worktree import list_worktrees
 from claudechic.commands import BARE_WORDS, handle_command
 from claudechic.features.worktree.commands import on_response_complete_finish
 from claudechic.permissions import PermissionRequest, PermissionResponse
-from claudechic.agent import Agent, ImageAttachment, ToolUse
+from claudechic.agent import (
+    Agent,
+    ImageAttachment,
+    ToolUse,
+    get_default_permission_mode,
+)
 from claudechic.agent_manager import AgentManager
 from claudechic.analytics import capture
 from claudechic.config import CONFIG, NEW_INSTALL, save as save_config
@@ -515,13 +520,13 @@ class ChatApp(App):
                 self.input_container.remove_class("hidden")
 
     def action_cycle_permission_mode(self) -> None:
-        """Cycle permission mode: default -> acceptEdits -> plan -> default.
+        """Cycle permission mode: default -> acceptEdits -> plan -> auto -> default.
 
         planSwarm is not in the cycle - use /plan-swarm to enter, shift-tab to exit.
         """
         if self._agent:
             agent = self._agent  # Capture for closure
-            modes = ["default", "acceptEdits", "plan"]
+            modes = ["default", "acceptEdits", "plan", "auto"]
             current = agent.permission_mode
 
             # If in planSwarm, exit to default (not in normal cycle)
@@ -538,7 +543,12 @@ class ChatApp(App):
             self.run_worker(set_mode(), exclusive=False)
 
             # Show notification with friendly names
-            display = {"default": "Default", "acceptEdits": "Auto-edit", "plan": "Plan"}
+            display = {
+                "default": "Default",
+                "auto": "Auto",
+                "acceptEdits": "Auto-edit",
+                "plan": "Plan",
+            }
             self.notify(f"Mode: {display[next_mode]}")
 
     def _update_footer_permission_mode(self) -> None:
@@ -630,7 +640,7 @@ class ChatApp(App):
         return ClaudeAgentOptions(
             permission_mode="bypassPermissions"
             if self._skip_permissions
-            else "default",
+            else get_default_permission_mode(cwd or Path.cwd()),
             env=env,
             setting_sources=["user", "project", "local"],
             cwd=cwd,

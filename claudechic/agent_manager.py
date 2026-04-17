@@ -9,7 +9,7 @@ from typing import Callable, Iterator
 
 from claude_agent_sdk import ClaudeAgentOptions
 
-from claudechic.agent import Agent
+from claudechic.agent import Agent, get_default_permission_mode, to_ui_permission_mode
 from claudechic.protocols import AgentManagerObserver, AgentObserver, PermissionHandler
 
 log = logging.getLogger(__name__)
@@ -90,7 +90,12 @@ class AgentManager:
         Returns:
             The created agent (not yet connected)
         """
-        agent = Agent(name=name, cwd=cwd, worktree=worktree)
+        agent = Agent(
+            name=name,
+            cwd=cwd,
+            worktree=worktree,
+            permission_mode=to_ui_permission_mode(get_default_permission_mode(cwd)),
+        )
 
         # Wire callbacks
         self._wire_agent_callbacks(agent)
@@ -131,7 +136,12 @@ class AgentManager:
         Returns:
             The created agent (connected and ready)
         """
-        agent = Agent(name=name, cwd=cwd, worktree=worktree)
+        agent = Agent(
+            name=name,
+            cwd=cwd,
+            worktree=worktree,
+            permission_mode=to_ui_permission_mode(get_default_permission_mode(cwd)),
+        )
         agent.model = model
 
         # Wire callbacks

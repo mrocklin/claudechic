@@ -35,7 +35,7 @@ async def test_app_mounts_basic_widgets(mock_sdk):
 
 @pytest.mark.asyncio
 async def test_permission_mode_cycle(mock_sdk):
-    """Shift+Tab cycles permission mode: default -> acceptEdits -> plan -> default."""
+    """Shift+Tab cycles permission mode: default -> acceptEdits -> plan -> auto -> default."""
     app = ChatApp()
     async with app.run_test() as pilot:
         assert app._agent is not None
@@ -46,6 +46,9 @@ async def test_permission_mode_cycle(mock_sdk):
 
         await pilot.press("shift+tab")
         assert app._agent.permission_mode == "plan"
+
+        await pilot.press("shift+tab")
+        assert app._agent.permission_mode == "auto"
 
         await pilot.press("shift+tab")
         assert app._agent.permission_mode == "default"

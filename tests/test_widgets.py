@@ -484,6 +484,12 @@ async def test_status_footer_permission_mode():
         assert hasattr(rendered, "plain")
         assert "plan mode" in rendered.plain.lower()  # type: ignore[union-attr]
 
+        footer.permission_mode = "auto"
+        rendered = label.render()
+        assert hasattr(rendered, "plain")
+        assert rendered.plain.lower() == "auto"  # type: ignore[union-attr]
+        assert label.has_class("auto-mode")
+
 
 @pytest.mark.asyncio
 async def test_status_footer_effort_label():

@@ -88,6 +88,18 @@ def mock_sdk():
         stack.enter_context(
             patch("claudechic.app.FileIndex", return_value=mock_file_index)
         )
+        # A developer with `permissions.defaultMode` set in their real
+        # ~/.claude/settings.json would otherwise see agents start in that mode
+        # and break assertions like "starts in default". Each importer does
+        # `from claudechic.agent import get_default_permission_mode`, so the
+        # name binding must be patched in each importing module.
+        for mod in ("agent", "agent_manager", "app"):
+            stack.enter_context(
+                patch(
+                    f"claudechic.{mod}.get_default_permission_mode",
+                    return_value="default",
+                )
+            )
         yield mock_client
 
 
