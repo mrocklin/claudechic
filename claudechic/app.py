@@ -44,7 +44,6 @@ from claudechic.messages import (
 )
 from claudechic.sessions import (
     find_session_by_prefix,
-    get_context_from_session,
     get_plan_path_for_session,
     get_recent_sessions,
 )
@@ -959,14 +958,25 @@ class ChatApp(App):
 
     @work(group="refresh_context", exclusive=True)
     async def refresh_context(self) -> None:
-        """Update context bar from session file (no API call)."""
+        """Update context bar from live SDK context usage.
+
+        Uses ``ClaudeSDKClient.get_context_usage()``, the same data source
+        Claude Code's ``/context`` command uses, so the bar always reflects
+        the active model's window (including the 1M beta for Opus 4.7).
+        """
         agent = self._agent
-        if not agent or not agent.session_id:
+        if not agent or not agent.client:
             self.context_bar.tokens = 0
             return
-        tokens = await get_context_from_session(agent.session_id, cwd=agent.cwd)
-        if tokens is not None:
-            self.context_bar.tokens = tokens
+        try:
+            usage = await agent.client.get_context_usage()
+        except Exception as e:
+            log.debug(f"get_context_usage failed: {e}")
+            return
+        raw_max = usage.get("rawMaxTokens")
+        if isinstance(raw_max, int) and raw_max > 0:
+            self.context_bar.max_tokens = raw_max
+        self.context_bar.tokens = usage.get("totalTokens", 0)
 
     def _send_initial_prompt(self) -> None:
         """Send the initial prompt from CLI args."""

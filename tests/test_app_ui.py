@@ -1,6 +1,6 @@
 """App-level UI tests without SDK dependency."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -422,6 +422,46 @@ async def test_context_report_displays(mock_sdk):
         # Verify data was parsed
         assert reports[0].data["model"] == "claude-opus-4-5-20251101"
         assert reports[0].data["tokens_used"] == 81000
+
+
+@pytest.mark.asyncio
+async def test_refresh_context_reads_sdk_usage(mock_sdk):
+    """refresh_context() pulls rawMaxTokens and totalTokens from the SDK.
+
+    Regression guard: if the SDK renames either field, the bar silently
+    stays stuck at its previous value — this test locks the contract.
+    """
+    mock_sdk.get_context_usage = AsyncMock(
+        return_value={
+            "rawMaxTokens": 1_000_000,
+            "totalTokens": 42_000,
+        }
+    )
+
+    app = ChatApp()
+    async with app.run_test():
+        app.refresh_context()
+        await wait_for_workers(app)
+
+        assert app.context_bar.max_tokens == 1_000_000
+        assert app.context_bar.tokens == 42_000
+
+
+@pytest.mark.asyncio
+async def test_refresh_context_survives_sdk_error(mock_sdk):
+    """SDK failure is non-fatal — bar keeps its prior value, app doesn't crash."""
+    mock_sdk.get_context_usage = AsyncMock(side_effect=RuntimeError("boom"))
+
+    app = ChatApp()
+    async with app.run_test():
+        app.context_bar.max_tokens = 500_000
+        app.context_bar.tokens = 123
+        app.refresh_context()
+        await wait_for_workers(app)
+
+        # Bar unchanged; no exception propagated to the app.
+        assert app.context_bar.max_tokens == 500_000
+        assert app.context_bar.tokens == 123
 
 
 @pytest.mark.asyncio

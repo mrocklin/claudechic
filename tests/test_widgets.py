@@ -406,6 +406,31 @@ async def test_context_bar_rendering():
 
 
 @pytest.mark.asyncio
+async def test_context_bar_scales_with_max_tokens():
+    """ContextBar percentage scales with max_tokens (per-model window).
+
+    950k out of a 1M window should read 95% (red), not max out as if the
+    bar were still hardcoded to 200k.
+    """
+    app = WidgetTestApp(lambda: ContextBar(id="ctx"))
+    async with app.run_test():
+        bar = app.query_one(ContextBar)
+
+        # 950k / 1M -> 95% (red zone, ≥ 0.8)
+        bar.max_tokens = 1_000_000
+        bar.tokens = 950_000
+        rendered = bar.render()
+        assert hasattr(rendered, "plain")
+        assert "95%" in rendered.plain  # type: ignore[union-attr]
+
+        # 180k / 1M -> 18% (low/dim zone, < 0.5), not 90%
+        bar.tokens = 180_000
+        rendered = bar.render()
+        assert hasattr(rendered, "plain")
+        assert "18%" in rendered.plain  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
 async def test_todo_panel_updates():
     """TodoPanel displays and updates todos."""
     app = WidgetTestApp(lambda: TodoPanel(id="panel"))

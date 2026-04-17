@@ -65,7 +65,13 @@ def get_project_sessions_dir(cwd: Path | None = None) -> Path | None:
     cwd = (cwd or Path.cwd()).absolute()
     # Replace path separators with dashes (handles both / and \ on Windows)
     # Also remove Windows drive colon (C:\foo -> C-foo)
-    project_key = str(cwd).replace(os.sep, "-").replace(":", "").replace("_", "-").replace(".", "-")
+    project_key = (
+        str(cwd)
+        .replace(os.sep, "-")
+        .replace(":", "")
+        .replace("_", "-")
+        .replace(".", "-")
+    )
     sessions_dir = Path.home() / ".claude/projects" / project_key
     return sessions_dir if sessions_dir.exists() else None
 
@@ -299,51 +305,3 @@ async def get_plan_path_for_session(
     if must_exist:
         return plan_path if plan_path.exists() else None
     return plan_path
-
-
-async def get_context_from_session(
-    session_id: str, cwd: Path | None = None, agent_id: str | None = None
-) -> int | None:
-    """Get total input context tokens from session file's last usage block.
-
-    Sums: input_tokens + cache_creation_input_tokens + cache_read_input_tokens
-    """
-    session_file = _get_session_file(session_id, cwd, agent_id)
-    if not session_file:
-        return None
-
-    # Read from end of file to find last usage entry efficiently
-    try:
-        file_size = os.path.getsize(session_file)
-        if file_size == 0:
-            return None
-
-        # Read last chunk (usually enough to find last usage)
-        chunk_size = min(32768, file_size)  # 32KB chunk
-        async with aiofiles.open(session_file, mode="rb") as f:
-            await f.seek(file_size - chunk_size)
-            chunk = await f.read()
-
-        # Split into lines, process in reverse
-        lines = chunk.split(b"\n")
-        for line in reversed(lines):
-            if not line.strip():
-                continue
-            try:
-                data = json.loads(line)
-                if "message" in data and isinstance(data["message"], dict):
-                    usage = data["message"].get("usage")
-                    if usage:
-                        return (
-                            usage.get("input_tokens", 0)
-                            + usage.get("cache_creation_input_tokens", 0)
-                            + usage.get("cache_read_input_tokens", 0)
-                        )
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                # Skip lines that fail to parse - expected for partial lines
-                # when reading from middle of file (chunk may split UTF-8 chars)
-                continue
-    except (IOError, OSError):
-        return None
-
-    return None

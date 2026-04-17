@@ -11,8 +11,12 @@ from claudechic.enums import ToolName
 
 
 # Constants
-MAX_CONTEXT_TOKENS = 200_000  # Claude's context window
+# Pre-connect fallback only. The authoritative per-model window comes from
+# ClaudeSDKClient.get_context_usage()'s ``rawMaxTokens``, fetched live by
+# ``ChatApp.refresh_context``.
+DEFAULT_CONTEXT_WINDOW = 200_000
 MAX_HEADER_WIDTH = 70  # Max width for tool headers
+
 
 # Inter-agent message patterns
 # Matches ask_agent: [Question from agent 'X' - please respond...]
