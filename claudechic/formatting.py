@@ -25,6 +25,39 @@ _AGENT_MESSAGE_RE = re.compile(r"^\[Message from agent '([^']+)'\]\n\n")
 _AGENT_SPAWNED_RE = re.compile(r"^\[Spawned by agent '([^']+)'\]\n\n")
 
 
+def strip_mcp_prefix(name: str) -> str:
+    """Strip 'mcp__<server>__' prefix for compact display."""
+    return re.sub(r"^mcp__[^_]+__", "", name)
+
+
+def extract_tool_search_names(content) -> list[str] | None:
+    """Extract tool names from a ToolSearch result.
+
+    Content is a list of {'type': 'tool_reference', 'tool_name': '...'} dicts,
+    or a stringified repr of same. Returns None if the shape doesn't match.
+    """
+    items = content
+    if isinstance(content, str):
+        if not content.strip().startswith("[{"):
+            return None
+        try:
+            import ast
+
+            items = ast.literal_eval(content)
+        except (ValueError, SyntaxError):
+            return None
+    if not isinstance(items, list):
+        return None
+    names = [
+        item["tool_name"]
+        for item in items
+        if isinstance(item, dict)
+        and item.get("type") == "tool_reference"
+        and item.get("tool_name")
+    ]
+    return names or None
+
+
 def format_agent_prompt(prompt: str) -> tuple[str, bool]:
     """Format inter-agent prompts for nicer display.
 
@@ -146,6 +179,11 @@ def format_result_summary(name: str, content: str, is_error: bool = False) -> st
     elif name == ToolName.WRITE:
         return "(done)"
 
+    elif name == ToolName.TOOL_SEARCH:
+        names = extract_tool_search_names(content)
+        count = len(names) if names else content.count("<function>")
+        return f"({count} tools)" if count else ""
+
     return ""
 
 
@@ -199,6 +237,14 @@ def format_tool_header(name: str, input: dict, cwd: Path | None = None) -> str:
         return "AskUserQuestion"
     elif name == ToolName.SKILL:
         return f"Skill: {input.get('skill', '?')}"
+    elif name == ToolName.TOOL_SEARCH:
+        query = input.get("query", "?")
+        if query.startswith("select:"):
+            names = (n.strip() for n in query[len("select:") :].split(","))
+            query = ", ".join(strip_mcp_prefix(n) for n in names if n)
+        max_results = input.get("max_results")
+        suffix = f" (max {max_results})" if max_results and max_results != 5 else ""
+        return f"ToolSearch: {query}{suffix}"
     elif name == ToolName.ENTER_PLAN_MODE:
         return "EnterPlanMode"
     elif name == ToolName.EXIT_PLAN_MODE:

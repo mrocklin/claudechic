@@ -18,10 +18,12 @@ from claude_agent_sdk import ToolUseBlock, ToolResultBlock
 
 from claudechic.enums import ToolName
 from claudechic.formatting import (
+    extract_tool_search_names,
     format_tool_header,
     format_tool_input,
     format_result_summary,
     make_relative,
+    strip_mcp_prefix,
 )
 from claudechic.widgets.content.diff import DiffWidget
 from claudechic.widgets.content.message import ChatMessage
@@ -130,6 +132,13 @@ class ToolUseWidget(BaseToolWidget):
                     yield Static("(Plan content not available)", id="tool-output")
                 if self._plan_path:
                     yield Button("📋 Edit Plan", classes="edit-plan-btn")
+            return
+        # ToolSearch: title summarizes query; body only shows loaded tools
+        if self.block.name == ToolName.TOOL_SEARCH:
+            with QuietCollapsible(
+                title=self._header, collapsed=self._initial_collapsed
+            ):
+                yield Static("", id="tool-output", markup=False)
             return
         # Edit tool: use lazy content when collapsed (DiffWidget is expensive)
         if self.block.name == ToolName.EDIT:
@@ -274,6 +283,16 @@ class ToolUseWidget(BaseToolWidget):
                     output_widget.update(preview)
                 elif self.block.name == ToolName.ENTER_PLAN_MODE:
                     output_widget.update("Entered plan mode")
+                elif self.block.name == ToolName.TOOL_SEARCH:
+                    names = extract_tool_search_names(result.content)
+                    if names:
+                        lines = [
+                            Text.assemble(("+ ", "green"), strip_mcp_prefix(n))
+                            for n in names
+                        ]
+                        output_widget.update(Text("\n").join(lines))
+                    else:
+                        output_widget.update(f"{preview}{trunc_suffix}")
                 else:
                     output_widget.update(f"{preview}{trunc_suffix}")
         except Exception:

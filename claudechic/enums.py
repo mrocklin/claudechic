@@ -44,6 +44,9 @@ class ToolName(StrEnum):
     # Skills
     SKILL = "Skill"
 
+    # Tool discovery
+    TOOL_SEARCH = "ToolSearch"
+
 
 class AgentStatus(StrEnum):
     """Agent status values."""
