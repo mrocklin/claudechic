@@ -222,6 +222,9 @@ class DiffWidget(HorizontalScroll):
     # Minimum width to show side-by-side (each side needs ~60 chars)
     SIDE_BY_SIDE_MIN_WIDTH = 130
 
+    # Expand tabs at input so ``len(text)`` matches rendered cell width.
+    TAB_SIZE = 8
+
     def __init__(
         self,
         old: str,
@@ -234,8 +237,8 @@ class DiffWidget(HorizontalScroll):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self._old = old
-        self._new = new
+        self._old = old.expandtabs(self.TAB_SIZE)
+        self._new = new.expandtabs(self.TAB_SIZE)
         self._path = path
         self._context_lines = context_lines
         self._replace_all = replace_all

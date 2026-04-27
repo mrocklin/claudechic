@@ -754,6 +754,24 @@ def test_highlight_text_preserves_tab_positions():
     assert keyword_spans, "expected a span covering `func` at [0:4]"
 
 
+def test_diff_widget_expands_tabs():
+    """Tabs in input must be expanded so ``len()`` matches rendered cell width.
+
+    Without expansion, tab-indented sources (Go, Makefiles) misalign because
+    terminals render ``\\t`` at up to 8 cols while ``len`` counts it as 1 —
+    backgrounds underfill and side-by-side columns drift.
+    """
+    from claudechic.widgets.content.diff import DiffWidget
+
+    old = "func main() {\n\treturn 1\n}"
+    new = "func main() {\n\treturn 2\n}"
+
+    w = DiffWidget(old=old, new=new, path="main.go")
+    assert "\t" not in w._old
+    assert "\t" not in w._new
+    assert " " * w.TAB_SIZE + "return 1" in w._old
+
+
 # --- Lazy collapsible tests ---
 
 
