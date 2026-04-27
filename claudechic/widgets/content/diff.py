@@ -37,13 +37,20 @@ LIGHT_THEME_STYLES = {
 def _get_cached_lexer(language: str):
     """Cache Pygments lexers to avoid repeated loading (~15% CPU savings)."""
     try:
-        return get_lexer_by_name(language, stripnl=False, ensurenl=True, tabsize=8)
+        return get_lexer_by_name(language, stripnl=False, ensurenl=False)
     except ClassNotFound:
         return None
 
 
 def _highlight_text(text: str, language: str) -> Content:
-    """Syntax highlight text using cached lexer and default HighlightTheme."""
+    """Syntax highlight text using cached lexer and default HighlightTheme.
+
+    Uses ``get_tokens_unprocessed`` so span positions come from the lexer's
+    source indices rather than being accumulated from token-text lengths.
+    That makes the result robust to lexer options (``tabsize``, ``ensurenl``)
+    that mutate token text and would otherwise desynchronize spans from the
+    source — most visibly for tab-indented languages like Go.
+    """
     if not language:
         return Content(text)
 
@@ -52,19 +59,16 @@ def _highlight_text(text: str, language: str) -> Content:
         return Content(text)
 
     text = "\n".join(text.splitlines())
-    token_start = 0
     spans: list[Span] = []
 
-    for token_type, token in lexer.get_tokens(text):
-        token_end = token_start + len(token)
+    for index, token_type, token in lexer.get_tokens_unprocessed(text):
         current_type = token_type
         while True:
             if style := HighlightTheme.STYLES.get(current_type):
-                spans.append(Span(token_start, token_end, style))
+                spans.append(Span(index, index + len(token), style))
                 break
             if (current_type := current_type.parent) is None:
                 break
-        token_start = token_end
 
     return Content(text, spans=spans).stylize_before("$text")
 
