@@ -9,6 +9,22 @@ import pytest
 from claudechic.features.worktree.git import _expand_worktree_path, start_worktree
 
 
+def _worktree_add_call(mock_run):
+    """Find the `git worktree add` call among all subprocess.run invocations.
+
+    `start_worktree` makes additional calls (e.g. `git symbolic-ref` to
+    record the parent branch); tests that want to inspect the add call
+    specifically should use this rather than `mock_run.call_args`.
+    """
+    for call in mock_run.call_args_list:
+        args = call.args[0]
+        if len(args) >= 3 and args[:3] == ["git", "worktree", "add"]:
+            return call
+    raise AssertionError(
+        f"No `git worktree add` call found in {mock_run.call_args_list}"
+    )
+
+
 @pytest.fixture
 def mock_worktree_deps():
     """Mock all external dependencies for start_worktree tests."""
@@ -146,7 +162,7 @@ class TestStartWorktreeWithConfig:
         assert success
         assert path == expected_path
         assert "Created worktree at" in message
-        mocks["run"].assert_called_once()
+        _worktree_add_call(mocks["run"])  # verifies a single add call exists
 
     @pytest.mark.parametrize(
         "config_return",
@@ -170,7 +186,7 @@ class TestStartWorktreeWithConfig:
         expected_path = Path("/original/test-repo-test-feature")
         assert success, f"Expected success but got failure: {message}"
         assert path == expected_path
-        mocks["run"].assert_called_once()
+        _worktree_add_call(mocks["run"])  # verifies the add call ran
 
     def test_creates_parent_directories_for_custom_path(
         self, mock_worktree_deps, tmp_path
@@ -183,7 +199,7 @@ class TestStartWorktreeWithConfig:
         template = f"{tmp_path}/deep/nested/path/${{repo_name}}/${{branch_name}}"
         mocks["config"].get.return_value = {"path_template": template}
 
-        success, message, path = start_worktree("test-feature")
+        success, _, path = start_worktree("test-feature")
 
         expected_path = (
             tmp_path / "deep" / "nested" / "path" / "test-repo" / "test-feature"
@@ -206,7 +222,7 @@ class TestStartWorktreeBase:
         success, _, _ = start_worktree("wt-a")
 
         assert success
-        call = mocks["run"].call_args
+        call = _worktree_add_call(mocks["run"])
         args = call.args[0]
         assert args[-1] == "HEAD"
         assert call.kwargs.get("cwd") is None
@@ -221,7 +237,7 @@ class TestStartWorktreeBase:
         success, _, _ = start_worktree("wt-a", base="main")
 
         assert success
-        args = mocks["run"].call_args.args[0]
+        args = _worktree_add_call(mocks["run"]).args[0]
         assert args[-1] == "main"
 
     def test_explicit_base_anchors_cwd_to_main_worktree(self, mock_worktree_deps):
@@ -236,7 +252,7 @@ class TestStartWorktreeBase:
         success, _, _ = start_worktree("wt-a", base="main")
 
         assert success
-        assert mocks["run"].call_args.kwargs.get("cwd") == main_path
+        assert _worktree_add_call(mocks["run"]).kwargs.get("cwd") == main_path
 
     def test_parallel_spawns_all_fork_from_same_base(self, mock_worktree_deps):
         """Two sibling worktrees both fork from the given base, not from each
@@ -250,8 +266,13 @@ class TestStartWorktreeBase:
         start_worktree("wt-a", base="main")
         start_worktree("wt-b", base="main")
 
-        assert mocks["run"].call_count == 2
-        for call in mocks["run"].call_args_list:
+        add_calls = [
+            c
+            for c in mocks["run"].call_args_list
+            if len(c.args[0]) >= 3 and c.args[0][:3] == ["git", "worktree", "add"]
+        ]
+        assert len(add_calls) == 2
+        for call in add_calls:
             assert call.args[0][-1] == "main"
             assert call.kwargs.get("cwd") == main_path
 

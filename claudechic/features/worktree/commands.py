@@ -333,8 +333,10 @@ def _switch_or_create_worktree(app: "ChatApp", feature_name: str) -> None:
             feature_name, wt.path, worktree=feature_name, auto_resume=True
         )
     else:
-        # Create new worktree
-        success, message, new_cwd = start_worktree(feature_name)
+        # Create new worktree. Pass the active agent's cwd so the parent
+        # branch recorded on the new worktree reflects where the user was
+        # working — not the app process's cwd.
+        success, message, new_cwd = start_worktree(feature_name, parent_cwd=app.sdk_cwd)
         if success and new_cwd:
             app._create_new_agent(
                 feature_name, new_cwd, worktree=feature_name, auto_resume=False

@@ -6,6 +6,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from claudechic.config import CONFIG
+from claudechic.errors import log
 
 
 class FinishPhase(Enum):
@@ -170,11 +171,99 @@ def get_main_worktree() -> tuple[Path, str] | None:
     return None
 
 
+_PARENT_BRANCH_FILE = "claudechic-parent-branch"
+
+
+def _worktree_git_dir(worktree_path: Path) -> Path | None:
+    """Resolve the per-worktree git dir (e.g. <main>/.git/worktrees/<name>).
+
+    For a linked worktree the worktree's `.git` is a file containing
+    `gitdir: <abs path>` pointing into the main repo's `.git/worktrees/`.
+    For the main worktree, `.git` is itself a directory. We parse the
+    pointer file directly rather than shelling out to `git rev-parse` so
+    this is cheap and doesn't muddy subprocess-based tests.
+    """
+    git_marker = worktree_path / ".git"
+    if git_marker.is_dir():
+        return git_marker
+    if not git_marker.is_file():
+        return None
+    try:
+        content = git_marker.read_text().strip()
+    except OSError:
+        return None
+    prefix = "gitdir: "
+    if not content.startswith(prefix):
+        return None
+    git_dir = Path(content[len(prefix) :])
+    if not git_dir.is_absolute():
+        git_dir = (worktree_path / git_dir).resolve()
+    return git_dir
+
+
+def record_parent_branch(worktree_path: Path, parent_branch: str) -> None:
+    """Persist the parent branch for a worktree in its private git dir.
+
+    Best-effort: failures are swallowed so worktree creation isn't blocked
+    by metadata IO. Stored alongside git's per-worktree state so removal of
+    the worktree cleans it up automatically.
+
+    No-op for the main worktree: its `.git` is the shared repo dir, not a
+    per-worktree dir, so a file written there wouldn't be auto-cleaned and
+    would leak across worktrees.
+    """
+    if _is_main_worktree(worktree_path):
+        return
+    try:
+        git_dir = _worktree_git_dir(worktree_path)
+        if git_dir is None:
+            return
+        (git_dir / _PARENT_BRANCH_FILE).write_text(parent_branch + "\n")
+    except OSError as e:
+        log.debug("Failed to record parent branch for %s: %s", worktree_path, e)
+
+
+def read_parent_branch(worktree_path: Path) -> str | None:
+    """Read the recorded parent branch for a worktree, if any."""
+    try:
+        git_dir = _worktree_git_dir(worktree_path)
+        if git_dir is None:
+            return None
+        f = git_dir / _PARENT_BRANCH_FILE
+        if not f.exists():
+            return None
+        value = f.read_text().strip()
+        return value or None
+    except OSError:
+        return None
+
+
+def _current_branch(cwd: Path) -> str | None:
+    """Return the current branch name at cwd, or None if detached/error."""
+    result = subprocess.run(
+        ["git", "symbolic-ref", "--short", "HEAD"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    name = result.stdout.strip()
+    return name or None
+
+
 def get_parent_branch(branch: str, cwd: Path | None = None) -> str | None:
     """Find the branch that the given branch was forked from.
 
     Returns the branch whose tip is an ancestor of our branch and is closest
     to our branch tip. This handles nested worktrees correctly.
+
+    Note: this is a best-effort heuristic used as a fallback. Worktrees
+    created via `start_worktree` record their parent explicitly — see
+    `record_parent_branch` / `read_parent_branch`. The heuristic is
+    ambiguous when sibling worktrees share a tip commit (e.g. a fresh
+    sibling that hasn't diverged yet looks identical to the real parent),
+    so prefer the recorded value when available.
     """
     worktrees = list_worktrees()
     other_branches = [wt.branch for wt in worktrees if wt.branch != branch]
@@ -259,13 +348,20 @@ def _expand_worktree_path(template: str, repo_name: str, feature_name: str) -> P
 
 
 def start_worktree(
-    feature_name: str, base: str | None = None
+    feature_name: str,
+    base: str | None = None,
+    parent_cwd: Path | None = None,
 ) -> tuple[bool, str, Path | None]:
     """Create a worktree for the given feature.
 
     When `base` is given, git runs with cwd=main worktree so the ref resolves
     deterministically regardless of caller cwd. When `base` is None, HEAD is
     resolved from the process cwd (legacy `/worktree` behavior).
+
+    `parent_cwd`, if given, is used to determine the parent branch to record
+    on the new worktree (used by `/worktree finish` to pick the merge target
+    unambiguously). When `base` is given it's recorded directly. When neither
+    is given we fall back to the current process cwd's branch.
 
     Returns (success, message, worktree_path).
     """
@@ -329,6 +425,20 @@ def start_worktree(
                 if not target.exists():
                     target.symlink_to(source_claude_dir.resolve())
 
+        # Record the parent branch so /worktree finish can pick the right
+        # merge target without guessing from commit topology. Prefer an
+        # explicit `base` (already a branch name); otherwise read the
+        # current branch from `parent_cwd`, falling back to process cwd.
+        # `base="HEAD"` is treated as "no explicit base" since it's just
+        # a placeholder for cwd resolution.
+        recorded_parent: str | None = None
+        if base and base.upper() != "HEAD":
+            recorded_parent = base
+        else:
+            recorded_parent = _current_branch(parent_cwd or Path.cwd())
+        if recorded_parent:
+            record_parent_branch(worktree_dir, recorded_parent)
+
         return True, f"Created worktree at {worktree_dir}", worktree_dir
 
     except subprocess.CalledProcessError as e:
@@ -364,8 +474,36 @@ def get_finish_info(cwd: Path | None = None) -> tuple[bool, str, FinishInfo | No
 
     main_dir = main_wt[0]
 
-    # Find parent branch (handles nested worktrees)
-    parent_branch = get_parent_branch(current_wt.branch, cwd=cwd)
+    # Prefer the parent branch recorded at worktree-creation time. The
+    # commit-topology heuristic (get_parent_branch) is ambiguous when a
+    # sibling worktree shares a tip with the real parent, and can route
+    # the merge into the wrong worktree.
+    #
+    # Validation: the recorded branch must currently have a checked-out
+    # worktree. If only the branch ref exists (worktree was removed), we
+    # have nowhere safe to merge — `parent_dir` would fall back to the
+    # main worktree, which has *main* checked out, and the merge would
+    # silently land on main instead of the recorded parent.
+    parent_branch = read_parent_branch(current_wt.path)
+    if parent_branch:
+        has_worktree = any(wt.branch == parent_branch for wt in worktrees)
+        if not has_worktree:
+            log.debug(
+                "Recorded parent branch %r for worktree %s has no checked-out "
+                "worktree; falling back to topology heuristic.",
+                parent_branch,
+                current_wt.path,
+            )
+            parent_branch = None
+    if parent_branch is None:
+        parent_branch = get_parent_branch(current_wt.branch, cwd=cwd)
+        if parent_branch is not None:
+            log.debug(
+                "No recorded parent for worktree %s; topology heuristic "
+                "selected %r (may be ambiguous if siblings share a tip).",
+                current_wt.path,
+                parent_branch,
+            )
     if parent_branch is None:
         # Fallback to main branch
         parent_branch = main_wt[1]
