@@ -823,6 +823,18 @@ class ChatApp(App):
             self.exit(
                 message=f"Connection failed: {e}\n\nPlease run `claude /login` to authenticate."
             )
+            return
+        except Exception as e:
+            # Catch-all (e.g. SDK "Control request timeout: initialize") so
+            # the user sees a clean message rather than a crashing traceback.
+            await capture(
+                "error_occurred",
+                error_type=type(e).__name__,
+                error_subtype=str(e)[:200],
+                context="initial_connect",
+            )
+            self.exit(message=f"Connection failed: {e}")
+            return
 
         # Load history if resuming
         if resume:
