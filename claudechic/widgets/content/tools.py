@@ -417,6 +417,9 @@ class ShellOutputWidget(Static):
         with QuietCollapsible(title=title, collapsed=self._collapsed):
             # Combine stderr + stdout, parse ANSI color codes
             output = "\n".join(filter(None, [self.stderr, self.stdout])).rstrip()
+            # PTY onlcr mode emits \r\n; strip \r so Rich doesn't treat it
+            # as a carriage return (which collapses lines onto each other).
+            output = output.replace("\r\n", "\n").replace("\r", "")
             if output:
                 yield Static(Text.from_ansi(output), id="shell-output")
 
