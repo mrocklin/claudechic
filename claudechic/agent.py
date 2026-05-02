@@ -21,6 +21,8 @@ from claude_agent_sdk import (
     ClaudeSDKClient,
     ResultMessage,
     SystemMessage,
+    # Aliased to disambiguate from the local TextBlock dataclass below.
+    TextBlock as SdkTextBlock,
     ToolResultBlock,
     ToolUseBlock,
     UserMessage,
@@ -604,12 +606,24 @@ Key Rules:
         if isinstance(message, AssistantMessage):
             parent_id = message.parent_tool_use_id
             for block in message.content:
-                # Skip TextBlock - handled via StreamEvent for streaming
                 if isinstance(block, ToolUseBlock):
                     self._handle_tool_use(block, parent_id)
                     had_tool_use[parent_id] = True
                 elif isinstance(block, ToolResultBlock):
                     self._handle_tool_result(block)
+                elif isinstance(block, SdkTextBlock):
+                    # Normally TextBlocks are streamed via StreamEvent deltas
+                    # and arrive here pre-rendered — skip duplicates. But local
+                    # slash commands (/context, /compact, …) bypass streaming
+                    # and deliver their full output as a single TextBlock with
+                    # an empty stream buffer. Route those as command output.
+                    if (
+                        not self._current_text_buffer
+                        and self._current_assistant is None
+                        and "## Context Usage" in block.text
+                        and self.observer
+                    ):
+                        self.observer.on_command_output(self, block.text)
 
         elif isinstance(message, UserMessage):
             # Capture UUID for checkpoints (needed for /rewind file restoration)

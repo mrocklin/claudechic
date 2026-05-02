@@ -103,20 +103,20 @@ async def handle_send(request: web.Request) -> web.Response:
     if not text:
         return web.json_response({"error": "No text provided"}, status=400)
 
-    # Check for slash/bang commands
+    # Check for slash/bang commands. handle_command returns True if handled
+    # locally; otherwise we fall through to forward the text to the SDK
+    # (e.g. SDK passthrough commands like /context, /compact).
     stripped = text.strip()
     if stripped.startswith("/") or stripped.startswith("!"):
         from claudechic.commands import handle_command as do_command
 
         try:
-            handled = do_command(_app, text)
-            return web.json_response(
-                {"status": "executed" if handled else "not_handled", "command": text}
-            )
+            if do_command(_app, text):
+                return web.json_response({"status": "executed", "command": text})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
-    # Send to active agent
+    # Send to active agent (handles passthrough slash commands too)
     agent = _app._agent
     if agent is None:
         return web.json_response({"error": "No active agent"}, status=400)
