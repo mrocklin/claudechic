@@ -75,7 +75,10 @@ def run_in_pty(
 
         os.close(master_fd)
         proc.wait()
-        return output.decode(errors="replace"), proc.returncode or 0
+        # Strip \r from PTY output (onlcr maps \n to \r\n); Rich's from_ansi
+        # treats bare \r as a cursor-return and collapses lines.
+        decoded = output.decode(errors="replace").replace("\r", "")
+        return decoded, proc.returncode or 0
     except Exception:
         os.close(master_fd)
         raise
@@ -162,7 +165,8 @@ def _run_in_pty_with_cancel(
         os.close(master_fd)
         master_fd = -1
         proc.wait()
-        return output.decode(errors="replace"), proc.returncode or 0, was_cancelled
+        decoded = output.decode(errors="replace").replace("\r", "")
+        return decoded, proc.returncode or 0, was_cancelled
 
     except Exception:
         if slave_fd >= 0:
