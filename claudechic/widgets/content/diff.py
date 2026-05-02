@@ -45,11 +45,16 @@ def _get_cached_lexer(language: str):
 def _highlight_text(text: str, language: str) -> Content:
     """Syntax highlight text using cached lexer and default HighlightTheme.
 
-    Uses ``get_tokens_unprocessed`` so span positions come from the lexer's
-    source indices rather than being accumulated from token-text lengths.
-    That makes the result robust to lexer options (``tabsize``, ``ensurenl``)
-    that mutate token text and would otherwise desynchronize spans from the
-    source — most visibly for tab-indented languages like Go.
+    Accumulates span positions from token-text lengths rather than trusting
+    the lexer's reported source indices. Some lexers (notably ``markdown``,
+    which delegates fenced code blocks to a sub-lexer) emit indices that
+    reset to 0 inside embedded blocks, so using those indices directly would
+    splat inner-block spans onto the start of the document.
+
+    Safe because the cached lexer is built with ``stripnl=False,
+    ensurenl=False`` (see ``_get_cached_lexer``) and default ``tabsize=0``,
+    and we expand tabs at the diff input — so tokens preserve source text
+    exactly (verified across markdown/python/go/js/rust).
     """
     if not language:
         return Content(text)
@@ -61,14 +66,16 @@ def _highlight_text(text: str, language: str) -> Content:
     text = "\n".join(text.splitlines())
     spans: list[Span] = []
 
-    for index, token_type, token in lexer.get_tokens_unprocessed(text):
+    pos = 0
+    for token_type, token in lexer.get_tokens(text):
         current_type = token_type
         while True:
             if style := HighlightTheme.STYLES.get(current_type):
-                spans.append(Span(index, index + len(token), style))
+                spans.append(Span(pos, pos + len(token), style))
                 break
             if (current_type := current_type.parent) is None:
                 break
+        pos += len(token)
 
     return Content(text, spans=spans).stylize_before("$text")
 

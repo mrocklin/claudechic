@@ -728,11 +728,12 @@ def test_word_diff_with_go_syntax():
 def test_highlight_text_preserves_tab_positions():
     """Tab-indented source must keep token spans aligned with raw text.
 
-    Regression test: previously the lexer was created with ``tabsize=8``,
-    which expands tabs into 8 spaces inside token text. The position
-    accumulator (now replaced with ``get_tokens_unprocessed`` indices)
-    drifted +7 chars per tab, so Go syntax spans landed on the wrong
-    characters or extended past end-of-content.
+    Regression test: with ``tabsize=8`` (Pygments default for many lexers),
+    tabs get expanded to 8 spaces inside token text and the position
+    accumulator drifts +7 chars per tab — so Go syntax spans land on the
+    wrong characters or extend past end-of-content. Mitigated by passing
+    ``stripnl=False, ensurenl=False`` (which keeps the default ``tabsize=0``)
+    plus expanding tabs at the diff input.
     """
     from claudechic.widgets.content.diff import _highlight_text
 
@@ -752,6 +753,80 @@ def test_highlight_text_preserves_tab_positions():
     # Spot-check that the keyword `func` got highlighted at position 0
     keyword_spans = [s for s in content._spans if s.start == 0 and s.end == 4]
     assert keyword_spans, "expected a span covering `func` at [0:4]"
+
+
+def test_highlight_text_markdown_with_fenced_code():
+    """Fenced code-block spans must land inside the block, not at index 0.
+
+    Regression test: Pygments' markdown lexer delegates fenced code blocks
+    to a sub-lexer (e.g. python) whose ``get_tokens_unprocessed`` emits
+    indices reset to 0 — relative to the inner code, not the full document.
+    Trusting those indices splatted Python keyword colors onto the start of
+    the file (e.g. across a heading), making markdown diffs look broken.
+    """
+    from claudechic.widgets.content.diff import _highlight_text
+
+    # Content after the code block is required: the markdown lexer's
+    # fenced-block regex only matches with a newline after the closing ```,
+    # and ``_highlight_text`` strips lone trailing newlines via
+    # ``"\n".join(splitlines())``. Trailing content keeps that newline alive
+    # so the python sub-lexer fires (the path that triggered the bug).
+    src = "# Heading\n\n```python\ndef foo():\n    return 1\n```\n\nend\n"
+    content = _highlight_text(src, "markdown")
+    rendered = content.plain
+
+    # Every span must lie within bounds of the rendered content
+    for span in content._spans:
+        assert 0 <= span.start <= span.end <= len(rendered), (
+            f"span {span} out of bounds for len={len(rendered)}"
+        )
+
+    # The `def` keyword must be highlighted at its real source position,
+    # not at index 0 (which is where the bug placed it).
+    def_pos = rendered.index("def")
+    def_spans = [
+        s for s in content._spans if s.start == def_pos and s.end == def_pos + 3
+    ]
+    assert def_spans, f"expected a span covering `def` at [{def_pos}:{def_pos + 3}]"
+
+    # Negative assertion: no span should sit at [0:3] over the heading text.
+    # Mirrors the bug's exact failure mode (`def`-keyword color at file start).
+    assert not [s for s in content._spans if (s.start, s.end) == (0, 3)], (
+        "no syntax span should land on the first 3 chars of the heading"
+    )
+
+
+def test_highlight_text_rst_with_code_block():
+    """RST ``.. code-block::`` directives have the same delegation bug shape.
+
+    Pygments' RST lexer delegates ``.. code-block:: python`` content to the
+    python sub-lexer, which emits indices reset to 0 — same root cause as
+    the markdown fenced-block bug. Locks in that the position-accumulator
+    fix covers RST too, since it's the second confirmed instance of the
+    Pygments delegation anti-pattern in the wild.
+    """
+    from claudechic.widgets.content.diff import _highlight_text
+
+    src = (
+        "Heading\n=======\n\n"
+        ".. code-block:: python\n\n"
+        "    def foo():\n"
+        "        return 1\n\n"
+        "end\n"
+    )
+    content = _highlight_text(src, "rst")
+    rendered = content.plain
+
+    for span in content._spans:
+        assert 0 <= span.start <= span.end <= len(rendered), (
+            f"span {span} out of bounds for len={len(rendered)}"
+        )
+
+    def_pos = rendered.index("def")
+    def_spans = [
+        s for s in content._spans if s.start == def_pos and s.end == def_pos + 3
+    ]
+    assert def_spans, f"expected a span covering `def` at [{def_pos}:{def_pos + 3}]"
 
 
 def test_diff_widget_expands_tabs():
