@@ -545,8 +545,8 @@ Key Rules:
 - Don't make large assumptions - ask questions
 - Use AskUserQuestion for requirement clarification
 - Use ExitPlanMode for plan approval (never ask "is this plan okay?" via text)
-- Build plan incrementally by writing/editing the plan file
-- Edit, Write, Bash, and NotebookEdit are NOT available (except writing to the plan file)
+- You MUST write your plan to the plan file using the Write tool. Only that file is writable.
+- Edit, Bash, and NotebookEdit are NOT available in plan mode
 {plan_file_info}
 </system-reminder>
 """
@@ -1020,6 +1020,8 @@ Key Rules:
             self.plan_path = await get_plan_path_for_session(
                 self.session_id, cwd=self.cwd, must_exist=False
             )
+            if self.plan_path:
+                self.plan_path.parent.mkdir(parents=True, exist_ok=True)
 
     async def set_permission_mode(self, mode: str) -> None:
         """Update permission mode via SDK and emit event.

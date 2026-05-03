@@ -299,7 +299,11 @@ async def get_plan_path_for_session(
         return None
 
     if not slug:
-        return None
+        if must_exist:
+            return None
+        # Fallback: use session_id when slug isn't available yet.
+        # May not match eventual slug-based path, but plan_path is cached per-session.
+        return Path.home() / ".claude" / "plans" / f"{session_id}.md"
 
     plan_path = Path.home() / ".claude" / "plans" / f"{slug}.md"
     if must_exist:
