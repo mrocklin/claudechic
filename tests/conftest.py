@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -14,8 +15,20 @@ from claudechic.widgets.layout.reviews import ReviewItem
 
 
 async def empty_async_gen():
-    """Empty async generator for mocking receive_response."""
+    """Empty async generator for mocking receive_response/receive_messages."""
     return
+    yield  # noqa: unreachable - makes this an async generator
+
+
+async def hanging_async_gen():
+    """Never-yielding async generator: sleeps forever.
+
+    Mocks the long-running SDK reader so the agent's reader task stays alive
+    (never sees end-of-stream) for the duration of the test, mirroring how a
+    real SDK connection behaves between turns.
+    """
+    while True:
+        await asyncio.sleep(3600)
     yield  # noqa: unreachable - makes this an async generator
 
 
@@ -60,6 +73,10 @@ def mock_sdk():
     mock_client.get_server_info = AsyncMock(return_value={"commands": [], "models": []})
     mock_client.set_permission_mode = AsyncMock()
     mock_client.receive_response = lambda: empty_async_gen()
+    # The agent now starts a long-running reader on receive_messages() in
+    # connect(). Use a never-yielding generator so the reader sits idle for the
+    # duration of the test (mirroring a real SDK connection between turns).
+    mock_client.receive_messages = lambda: hanging_async_gen()
     mock_client._transport = None  # For get_claude_pid_from_client
 
     # Mock FileIndex to avoid git subprocess transport leaks

@@ -210,7 +210,9 @@ class Agent:
         # SDK
         self.client: ClaudeSDKClient | None = None
         self.session_id: str | None = None
-        self._response_task: asyncio.Task | None = None
+        # Continuous reader: lives for the whole connection so post-turn
+        # messages (e.g. from ScheduleWakeup/Monitor) aren't stranded.
+        self._reader_task: asyncio.Task | None = None
 
         # Status
         self.status: AgentStatus = AgentStatus.IDLE
@@ -306,12 +308,17 @@ class Agent:
         self.file_index = FileIndex(root=self.cwd)
         await self.file_index.refresh()
 
+        self._reader_task = asyncio.create_task(
+            self._read_messages_forever(),
+            name=f"agent-{self.id}-reader",
+        )
+
     async def disconnect(self) -> None:
         """Disconnect and cleanup."""
-        if self._response_task and not self._response_task.done():
-            self._response_task.cancel()
+        if self._reader_task and not self._reader_task.done():
+            self._reader_task.cancel()
             try:
-                await self._response_task
+                await self._reader_task
             except asyncio.CancelledError:
                 pass
 
@@ -432,9 +439,7 @@ class Agent:
         self.pending_images.clear()
 
     async def send(self, prompt: str, *, display_as: str | None = None) -> None:
-        """Send a message and start processing response.
-
-        The response is processed concurrently - this method returns immediately.
+        """Send a message; the long-running reader handles the response.
 
         Args:
             prompt: The prompt to send to Claude
@@ -458,37 +463,51 @@ class Agent:
         if self.observer:
             self.observer.on_prompt_sent(self, display_text, list(self.pending_images))
 
+        self._reset_response_state()
         self._set_status(AgentStatus.BUSY)
+        self._interrupted = False  # Clear interrupt flag for new query
+
+        # Prepend plan mode instructions if in plan mode
+        if self.permission_mode == "plan":
+            prompt = self._get_plan_mode_instructions() + prompt
+
+        # Send the prompt. The reader task (started in connect()) will pick up
+        # the response messages as they arrive.
+        if self.pending_images:
+            message = self._build_message_with_images(prompt)
+            if self.client and self.client._transport:
+                await self.client._transport.write(json.dumps(message) + "\n")
+            self.pending_images.clear()
+        else:
+            await self.client.query(prompt)
+
+    def _reset_response_state(self) -> None:
+        """Clear per-turn state so the next response starts fresh.
+
+        Called from send() at the start of a user-initiated turn, and from the
+        reader when it detects a new turn beginning after IDLE (e.g. when a
+        ScheduleWakeup fires and the agent resumes work without a user prompt).
+        """
         self.response_had_tools = False
         self._current_assistant = None
         self._current_text_buffer = ""
         self._needs_new_message = True
-        self._thinking_hidden = False  # Reset for new response
-        self._interrupted = False  # Clear interrupt flag for new query
-
-        # Start response processing
-        self._response_task = asyncio.create_task(
-            self._process_response(prompt),
-            name=f"agent-{self.id}-response",
-        )
+        self._thinking_hidden = False
 
     async def interrupt(self) -> None:
-        """Interrupt current response."""
+        """Interrupt current response.
+
+        Tells the SDK to stop the current turn. The reader keeps running and
+        will process the SDK's wrap-up messages (ending in ResultMessage),
+        which naturally returns the agent to IDLE.
+        """
         self._interrupted = True
-        if self._response_task and not self._response_task.done():
-            self._response_task.cancel()
-            try:
-                await self._response_task
-            except asyncio.CancelledError:
-                pass
 
         if self.client:
             try:
                 await self.client.interrupt()
             except Exception:
                 pass
-
-        self._set_status(AgentStatus.IDLE)
 
     async def _send_followup(self, message: str) -> None:
         """Send a follow-up message after brief delay (for 'do something else' flow)."""
@@ -532,83 +551,108 @@ Key Rules:
 </system-reminder>
 """
 
-    async def _process_response(self, prompt: str) -> None:
-        """Process SDK response stream."""
+    async def _read_messages_forever(self) -> None:
+        """Continuously consume the SDK message stream.
+
+        Lives for the lifetime of the connection so that post-turn messages
+        (e.g. from ``ScheduleWakeup``/``Monitor`` after a ``ResultMessage``)
+        are observed and surfaced. ``receive_response()`` would terminate
+        after the first ``ResultMessage`` and strand them.
+
+        The outer ``while True`` exists for soft recovery: a malformed-JSON
+        error breaks the current iterator, but a fresh ``receive_messages()``
+        call resumes reading — needed so the recovery message scheduled below
+        has a live consumer.
+        """
         try:
-            # Prepend plan mode instructions if in plan mode
-            if self.permission_mode == "plan":
-                prompt = self._get_plan_mode_instructions() + prompt
+            while True:
+                try:
+                    async for message in self.client.receive_messages():  # type: ignore[union-attr]
+                        # New turn starting after IDLE (post-turn wakeup).
+                        # Wakeup turns observed in practice begin with an
+                        # AssistantMessage or StreamEvent; we skip SystemMessage
+                        # so the connection-init message doesn't spuriously
+                        # flip us into BUSY before any real work begins.
+                        if self.status == AgentStatus.IDLE and not isinstance(
+                            message, SystemMessage
+                        ):
+                            self._reset_response_state()
+                            self._set_status(AgentStatus.BUSY)
 
-            # Send message with images if any
-            if self.pending_images:
-                message = self._build_message_with_images(prompt)
-                if self.client and self.client._transport:
-                    await self.client._transport.write(json.dumps(message) + "\n")
-                self.pending_images.clear()
-            else:
-                await self.client.query(prompt)  # type: ignore[union-attr]
+                        try:
+                            await self._handle_sdk_message(message)
+                        except Exception as e:
+                            log.exception("Error handling SDK message")
+                            if self.observer:
+                                self.observer.on_error(
+                                    self, "Error handling message", e
+                                )
 
-            had_tool_use: dict[str | None, bool] = {}
+                        if isinstance(message, ResultMessage):
+                            self._flush_current_text()
+                            self._set_status(AgentStatus.IDLE)
+                            # The interrupt's wrap-up has landed — clear the
+                            # flag so future errors aren't silently swallowed.
+                            self._interrupted = False
+                            # "Do something else" permission flow
+                            if self._pending_followup:
+                                followup = self._pending_followup
+                                self._pending_followup = None
+                                create_safe_task(
+                                    self._send_followup(followup),
+                                    name="send-followup",
+                                )
 
-            async for message in self.client.receive_response():  # type: ignore[union-attr]
-                await self._handle_sdk_message(message, had_tool_use)
+                    # Iterator ended cleanly (connection closed) — stop reading.
+                    break
 
-            # Check for pending follow-up (from "do something else" permission response)
-            if self._pending_followup:
-                followup = self._pending_followup
-                self._pending_followup = None
-                # Schedule follow-up query after a brief delay to let UI update
-                create_safe_task(self._send_followup(followup), name="send-followup")
+                except asyncio.CancelledError:
+                    raise
+                except CLIJSONDecodeError as e:
+                    # Soft recovery: send the error back to Claude and restart
+                    # the iterator so the retry's response is consumed.
+                    log.warning("CLIJSONDecodeError: %s", e)
+                    if self.observer:
+                        self.observer.on_error(self, str(e), e)
+                    self._set_status(AgentStatus.IDLE)
+                    create_safe_task(
+                        self._send_followup(f"Error: {e}"),
+                        name="json-decode-retry",
+                    )
+                    continue
+                except Exception as e:
+                    error_type = type(e).__name__
+                    error_str = str(e).lower()
+                    is_connection_error = (
+                        "ConnectionError" in error_type
+                        or "BrokenPipeError" in error_type
+                        or ("connection" in error_str and "api" not in error_str)
+                    )
 
-        except asyncio.CancelledError:
-            raise
-        except CLIJSONDecodeError as e:
-            # Feed the error back to the agent so it can recover.
-            log.warning("CLIJSONDecodeError: %s", e)
-            if self.observer:
-                self.observer.on_error(self, str(e), e)
-            create_safe_task(
-                self._send_followup(f"Error: {e}"), name="json-decode-retry"
-            )
-            return
-        except Exception as e:
-            # Check if this is a connection error (SDK process died)
-            # Be specific: only actual connection failures, not API errors mentioning "connection"
-            error_type = type(e).__name__
-            error_str = str(e).lower()
-            is_connection_error = (
-                "ConnectionError" in error_type
-                or "BrokenPipeError" in error_type
-                or ("connection" in error_str and "api" not in error_str)
-            )
+                    if self._interrupted:
+                        log.info("Suppressed error after interrupt: %s", e)
+                    else:
+                        log.exception("Reader failed")
+                        if self.observer:
+                            self.observer.on_error(self, "Response failed", e)
 
-            if self._interrupted:
-                log.info("Suppressed error after interrupt: %s", e)
-            else:
-                log.exception("Response processing failed")
-                if self.observer:
-                    self.observer.on_error(self, "Response failed", e)
+                    if is_connection_error and self.observer:
+                        self.observer.on_connection_lost(self)
 
-            # Auto-reconnect on connection errors
-            if is_connection_error and self.observer:
-                self.observer.on_connection_lost(self)
-
-            if self.observer:
-                self.observer.on_complete(self, None)
+                    if self.observer:
+                        self.observer.on_complete(self, None)
+                    break
         finally:
             self._flush_current_text()
             self._set_status(AgentStatus.IDLE)
 
-    async def _handle_sdk_message(
-        self, message: Any, had_tool_use: dict[str | None, bool]
-    ) -> None:
+    async def _handle_sdk_message(self, message: Any) -> None:
         """Handle a single SDK message."""
         if isinstance(message, AssistantMessage):
             parent_id = message.parent_tool_use_id
             for block in message.content:
                 if isinstance(block, ToolUseBlock):
                     self._handle_tool_use(block, parent_id)
-                    had_tool_use[parent_id] = True
                 elif isinstance(block, ToolResultBlock):
                     self._handle_tool_result(block)
                 elif isinstance(block, SdkTextBlock):
