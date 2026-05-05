@@ -110,10 +110,6 @@ EffortLabel:hover {
     color: $secondary;
 }
 
-.footer-label.plan-swarm-mode {
-    color: $error;
-}
-
 .footer-label.auto-mode {
     color: $success;
 }

@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import subprocess
 import time
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -105,7 +104,6 @@ COMMANDS: list[tuple[str, str, list[str]]] = [
     ),
     ("/welcome", "Show welcome message", []),
     ("/reviewer", "Spawn a review agent for current changes", []),
-    ("/plan-swarm", "Start swarm planning with multiple approaches", []),
     ("/rewind", "Rewind to a previous checkpoint", []),
     ("/help", "Show help", []),
     ("/exit", "Quit", []),
@@ -144,8 +142,6 @@ def get_help_commands() -> list[tuple[str, str]]:
             display_name = "/reviews [job_id]"
         elif name == "/reviewer":
             display_name = "/reviewer [focus]"
-        elif name == "/plan-swarm":
-            display_name = "/plan-swarm"
         elif name == "/rewind":
             display_name = "/rewind [index]"
         result.append((display_name, desc))
@@ -269,10 +265,6 @@ def handle_command(app: "ChatApp", prompt: str) -> bool:
         _track_command(app, "reviewer")
         context = cmd.split(maxsplit=1)[1] if cmd.startswith("/reviewer ") else None
         return _handle_review(app, context)
-
-    if cmd == "/plan-swarm":
-        _track_command(app, "plan-swarm")
-        return _handle_plan_swarm(app)
 
     if cmd == "/help":
         _track_command(app, "help")
@@ -930,175 +922,3 @@ def _handle_analytics(app: "ChatApp", command: str) -> bool:
     status = "enabled" if enabled else "disabled"
     app.notify(f"Analytics {status}, ID: {user_id[:8]}...")
     return True
-
-
-# =============================================================================
-# Plan Swarm - Multi-perspective planning with debate
-# =============================================================================
-
-SWARM_PERSPECTIVE_PROMPT = """\
-You are the {perspective_upper} planner in a swarm planning session.
-
-YOUR IDENTITY: {swarm_id}-{perspective}
-YOUR PEERS:
-{peers}
-ORCHESTRATOR: {orchestrator}
-
-TASK: {task}
-
-YOUR PERSPECTIVE: {perspective_description}
-
-== RULES ==
-
-- Research and design only - do NOT write or edit code
-- Use Task tool with Explore subagents to understand the codebase
-- Read files with Read, Glob, Grep
-- Form strong opinions based on evidence
-
-== PROTOCOL ==
-
-1. RESEARCH: Launch 2-3 Explore subagents in parallel to understand the codebase.
-
-2. PROPOSE: Send your plan to peers and orchestrator:
-   tell_agent("{peer1}", "PROPOSAL from {perspective}: [detailed plan with rationale]")
-   tell_agent("{peer2}", "PROPOSAL from {perspective}: [detailed plan with rationale]")
-   tell_agent("{orchestrator}", "PROPOSAL SENT: [1-sentence summary]")
-
-3. DEBATE: When you receive peer proposals, respond directly:
-   - Challenge assumptions with evidence from the codebase
-   - Defend your approach, but acknowledge good points
-   - You CAN change your mind if convinced
-
-4. CONCLUDE: After 2-3 rounds, send final position:
-   tell_agent("{orchestrator}", "FINAL POSITION: [refined plan, noting changes from debate]")
-
-== DEBATE STYLE ==
-
-Be direct. Use evidence: "The pattern in auth.py uses X, so..." or "I found 3 places that would break..."
-"""
-
-PERSPECTIVE_DESCRIPTIONS = {
-    "conservative": (
-        "Minimize risk. Prefer proven patterns. Prioritize reliability.\n"
-        "- Use established solutions over novel approaches\n"
-        "- Minimize changes to existing architecture\n"
-        "- Ensure backwards compatibility\n"
-        "- Focus on maintainability and testability\n"
-        "- When in doubt, do less"
-    ),
-    "balanced": (
-        "Balance pragmatism with improvement. Follow best practices.\n"
-        "- Consider trade-offs between innovation and stability\n"
-        "- Apply industry-standard patterns where appropriate\n"
-        "- Weigh implementation cost against long-term benefits\n"
-        "- Find the 'Goldilocks' solution - not too much, not too little\n"
-        "- Be the voice of reason between extremes"
-    ),
-    "creative": (
-        "Challenge assumptions. Propose novel approaches. Take calculated risks.\n"
-        "- Question whether the existing approach is optimal\n"
-        "- Consider unconventional solutions that could be game-changers\n"
-        "- Identify opportunities others might miss\n"
-        "- Accept higher risk for potentially higher reward\n"
-        "- Push the boundaries of what's possible"
-    ),
-}
-
-SWARM_ORCHESTRATOR_PROMPT = """\
-You are orchestrating a swarm planning debate for task: {task}
-
-== FIRST: CALL EnterPlanMode ==
-
-== AGENTS (already spawned) ==
-
-- {swarm_id}-conservative (risk-averse, proven patterns)
-- {swarm_id}-balanced (pragmatic middle ground)
-- {swarm_id}-creative (novel approaches, higher risk/reward)
-
-They will research, propose plans to each other, debate, and send you final positions.
-
-== YOUR JOB ==
-
-1. Call EnterPlanMode now
-
-2. Monitor: You'll receive PROPOSAL SENT and FINAL POSITION messages
-
-3. If stuck: ask_agent("{swarm_id}-conservative", "What's your status?")
-
-4. Synthesize: Once you have final positions, write synthesis to your plan file
-
-5. User choice via AskUserQuestion: Conservative / Balanced / Creative / Hybrid
-
-6. Finalize: Write final plan, call ExitPlanMode, then close_agent on all 3
-"""
-
-
-def _build_perspective_prompt(
-    perspective: str, swarm_id: str, task: str, peers: list[str], orchestrator: str
-) -> str:
-    """Build the prompt for a perspective agent."""
-    peer1, peer2 = peers
-    peers_list = "\n".join(f"- {p}" for p in peers)
-
-    return SWARM_PERSPECTIVE_PROMPT.format(
-        perspective=perspective,
-        perspective_upper=perspective.upper(),
-        perspective_description=PERSPECTIVE_DESCRIPTIONS[perspective],
-        swarm_id=swarm_id,
-        task=task,
-        peers=peers_list,
-        peer1=peer1,
-        peer2=peer2,
-        orchestrator=orchestrator,
-    )
-
-
-def _handle_plan_swarm(app: "ChatApp") -> bool:
-    """Enter plan-swarm mode. Next user message will spawn perspective agents."""
-    agent = app._agent
-    if not agent:
-        app.notify("No active agent", severity="error")
-        return True
-
-    async def enter_mode():
-        await agent.set_permission_mode("planSwarm")
-
-    app.run_worker(enter_mode(), exclusive=False)
-    app.notify("Plan swarm mode - enter your task")
-    return True
-
-
-def start_plan_swarm(app: "ChatApp", task: str) -> None:
-    """Spawn perspective agents and send orchestrator prompt. Called when user sends first message in planSwarm mode."""
-    agent = app._agent
-    if not agent:
-        return
-
-    # Reset mode to default (the orchestrator will enter plan mode via EnterPlanMode)
-    async def reset_mode():
-        await agent.set_permission_mode("default")
-
-    app.run_worker(reset_mode(), exclusive=False)
-
-    cwd = agent.cwd
-    orchestrator = agent.name
-
-    # Generate unique swarm ID
-    swarm_id = str(uuid.uuid4())[:8]
-
-    # Spawn the 3 perspective agents
-    perspectives = ["conservative", "balanced", "creative"]
-    for p in perspectives:
-        peers = [f"{swarm_id}-{x}" for x in perspectives if x != p]
-        prompt = _build_perspective_prompt(p, swarm_id, task, peers, orchestrator)
-        agent_name = f"{swarm_id}-{p}"
-        app._create_new_agent(
-            agent_name, cwd, switch_to=False, initial_prompt=(prompt, "/plan-swarm")
-        )
-
-    # Send orchestrator prompt to current agent
-    orchestrator_prompt = SWARM_ORCHESTRATOR_PROMPT.format(
-        task=task,
-        swarm_id=swarm_id,
-    )
-    app._send_to_active_agent(orchestrator_prompt, display_as="/plan-swarm")

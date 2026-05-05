@@ -106,7 +106,7 @@ class StatusFooter(Static):
     """Footer showing git branch, model, auto-edit status, and resource indicators."""
 
     can_focus = False
-    permission_mode = reactive("default")  # default, acceptEdits, plan, planSwarm, auto
+    permission_mode = reactive("default")  # default, acceptEdits, plan, auto
     model = reactive("")
     # "" = SDK default (shown muted), else low/medium/high/xhigh/max
     effort = reactive("")
@@ -155,7 +155,6 @@ class StatusFooter(Static):
     # means one entry here; _MODE_CLASSES is derived below.
     _MODE_DISPLAY: dict[str, tuple[str, str | None]] = {
         "default": ("Auto-edit: off", None),
-        "planSwarm": ("Plan swarm", "plan-swarm-mode"),
         "plan": ("Plan mode", "plan-mode"),
         "acceptEdits": ("Auto-edit: on", "active"),
         "auto": ("Auto", "auto-mode"),

@@ -124,8 +124,6 @@ _SDK_PERMISSION_MODES = frozenset(
 
 # Modes the UI (footer label, shift+tab cycle) knows how to display. A narrower
 # subset of the SDK modes; see `to_ui_permission_mode` for the mapping.
-# `planSwarm` is intentionally excluded — it's an internal state toggled by
-# a slash command, not something users should configure via settings.json.
 _UI_PERMISSION_MODES = frozenset({"default", "acceptEdits", "plan", "auto"})
 
 
@@ -1011,15 +1009,12 @@ Key Rules:
             if self.observer:
                 self.observer.on_status_changed(self)
 
-    # Valid permission modes
-    PERMISSION_MODES = {"default", "acceptEdits", "plan", "planSwarm", "auto"}
-
     def _set_permission_mode_local(self, mode: str) -> None:
         """Update permission mode locally without calling SDK.
 
         Used when SDK already knows (e.g., EnterPlanMode/ExitPlanMode tools).
         """
-        assert mode in self.PERMISSION_MODES, f"Invalid permission mode: {mode}"
+        assert mode in _UI_PERMISSION_MODES, f"Invalid permission mode: {mode}"
         if self.permission_mode != mode:
             self.permission_mode = mode
             if self.observer:
@@ -1036,9 +1031,9 @@ Key Rules:
         """Update permission mode via SDK and emit event.
 
         Args:
-            mode: One of 'default', 'acceptEdits', 'plan'
+            mode: One of 'default', 'acceptEdits', 'plan', 'auto'
         """
-        assert mode in self.PERMISSION_MODES, f"Invalid permission mode: {mode}"
+        assert mode in _UI_PERMISSION_MODES, f"Invalid permission mode: {mode}"
         if self.permission_mode != mode:
             self.permission_mode = mode
             # Fetch plan path when entering plan mode
@@ -1050,8 +1045,7 @@ Key Rules:
             # shift-tab into plan mode right after launch to silently no-op
             # the SDK call — the CLI would then reject ExitPlanMode at
             # validateInput with "you are not in plan mode".
-            # "planSwarm" is claudechic-specific; the SDK doesn't know it.
-            if self.client and mode != "planSwarm":
+            if self.client:
                 await self.client.set_permission_mode(cast(PermissionMode, mode))
             if self.observer:
                 self.observer.on_permission_mode_changed(self)
