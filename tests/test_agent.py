@@ -1,12 +1,15 @@
-"""Tests for claudechic.agent module-level helpers."""
+"""Tests for claudechic.agent module-level helpers and Agent permission handling."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from claudechic.agent import get_default_permission_mode, to_ui_permission_mode
+import pytest
+from claude_agent_sdk import PermissionResultAllow
+
+from claudechic.agent import Agent, get_default_permission_mode, to_ui_permission_mode
 
 
 def _write_settings(path: Path, default_mode: str) -> None:
@@ -65,3 +68,25 @@ def test_to_ui_permission_mode_collapses_sdk_only_modes():
 def test_to_ui_permission_mode_passes_ui_modes_through():
     for mode in ("default", "acceptEdits", "plan", "auto"):
         assert to_ui_permission_mode(mode) == mode
+
+
+@pytest.mark.asyncio
+async def test_handle_permission_auto_mode_approves_all(tmp_path):
+    """In auto mode, every tool is auto-approved without prompting.
+
+    Regression test: switching back into auto mode mid-session via
+    set_permission_mode used to leave the CLI calling can_use_tool, and
+    _handle_permission had no branch for "auto" — so it prompted the user
+    instead of auto-approving.
+    """
+    agent = Agent(name="t", cwd=tmp_path, permission_mode="auto")
+    ctx = MagicMock()
+    cases = [
+        ("Bash", {"command": "rm -rf /"}),
+        ("Edit", {"file_path": "/x", "old_string": "a", "new_string": "b"}),
+        ("Write", {"file_path": "/x", "content": "y"}),
+        ("Read", {"file_path": "/x"}),
+    ]
+    for tool, inp in cases:
+        result = await agent._handle_permission(tool, inp, ctx)
+        assert isinstance(result, PermissionResultAllow), tool
