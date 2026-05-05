@@ -127,10 +127,6 @@ BaseToolWidget {
     margin: 0;
 }
 
-BaseToolWidget:hover {
-    border-left: wide $panel-lighten-2;
-}
-
 /* Error messages - red, like user messages but indicating problems */
 ErrorMessage {
     border-left: thick $error;
@@ -420,12 +416,6 @@ MarkdownFence {
     scrollbar-size-horizontal: 1;
     scrollbar-background: $surface;
     scrollbar-color: $surface;
-}
-
-MarkdownFence:hover {
-    scrollbar-color: $panel;
-    scrollbar-color-hover: $panel-lighten-1;
-    scrollbar-color-active: $panel-lighten-2;
 }
 
 /* Absorb trailing margin from last MarkdownParagraph/MarkdownFence inside
