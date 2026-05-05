@@ -209,7 +209,7 @@ class CommentInput(TextArea):
         height: auto;
         max-height: 10;
         min-height: 3;
-        max-width: 80;
+        width: 100%;
         margin-top: 1;
         background: $surface;
         border: solid $primary;
