@@ -15,8 +15,10 @@ from unittest.mock import patch
 import pytest
 
 from claudechic.features.worktree.git import (
+    cleanup_worktrees,
     get_finish_info,
     get_parent_branch,
+    has_uncommitted_changes,
     read_parent_branch,
     record_parent_branch,
     start_worktree,
@@ -221,3 +223,34 @@ def test_get_finish_info_ignores_stale_record_when_parent_worktree_gone(
     # silently became `repo`, and the merge would land on main.
     assert info.base_branch == "main"
     assert info.main_dir == repo
+
+
+def test_cleanup_handles_stale_worktree_path(patched_main, tmp_path):
+    """If a worktree's path has been deleted externally (e.g. pytest tmp
+    cleanup), `/worktree cleanup` should prune the stale ref instead of
+    crashing with CalledProcessError from `git status`.
+    """
+    import shutil
+
+    repo = patched_main
+    template = f"{tmp_path}/wts/${{repo_name}}/${{branch_name}}"
+    with patch("claudechic.features.worktree.git.CONFIG") as cfg:
+        cfg.get.return_value = {"path_template": template}
+        ok, _, wt_path = start_worktree("feat-stale", base="main")
+        assert ok and wt_path is not None
+
+    # Simulate external deletion of the worktree directory.
+    shutil.rmtree(wt_path)
+    assert not wt_path.exists()
+
+    # Probe: should not raise on missing path.
+    assert has_uncommitted_changes(wt_path) is False
+
+    # Cleanup should succeed via prune (branch is merged since no commits added).
+    results = cleanup_worktrees(["feat-stale"])
+    assert len(results) == 1
+    branch, success, msg, _ = results[0]
+    assert branch == "feat-stale"
+    assert success, msg
+    # Stale ref is gone.
+    assert "feat-stale" not in _git(repo, "worktree", "list")

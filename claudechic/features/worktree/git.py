@@ -802,7 +802,12 @@ def finish_cleanup(info: FinishInfo) -> tuple[bool, str]:
 
 
 def has_uncommitted_changes(worktree_path: Path) -> bool:
-    """Check if a worktree has uncommitted changes."""
+    """Check if a worktree has uncommitted changes.
+
+    Returns False if the worktree path is missing (prunable/stale ref).
+    """
+    if not worktree_path.exists():
+        return False
     result = subprocess.run(
         ["git", "-C", str(worktree_path), "status", "--porcelain"],
         capture_output=True,
@@ -830,10 +835,19 @@ def is_branch_merged(
 def remove_worktree(worktree: WorktreeInfo, force: bool = False) -> tuple[bool, str]:
     """Remove a worktree and its branch. Returns (success, message)."""
     try:
-        cmd = ["git", "worktree", "remove", str(worktree.path)]
-        if force:
-            cmd.append("--force")
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        if not worktree.path.exists():
+            # Stale worktree (path deleted externally) - prune to clear the ref
+            subprocess.run(
+                ["git", "worktree", "prune"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        else:
+            cmd = ["git", "worktree", "remove", str(worktree.path)]
+            if force:
+                cmd.append("--force")
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
 
         delete_flag = "-D" if force else "-d"
         subprocess.run(
