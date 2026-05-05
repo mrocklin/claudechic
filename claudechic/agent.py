@@ -1033,11 +1033,14 @@ Key Rules:
             # Fetch plan path when entering plan mode
             if mode == "plan":
                 await self.ensure_plan_path()
-            # Only call SDK if connected (client exists and has active connection).
-            # "planSwarm" is claudechic-specific; skip SDK call for it since the
-            # SDK's PermissionMode Literal doesn't include it.
-            if self.client and self.session_id and mode != "planSwarm":
-                # Validated by the assert above; cast for the SDK's Literal type.
+            # Push mode to SDK as soon as the subprocess is connected.
+            # Do NOT gate on self.session_id: the control request works before
+            # the `init` SystemMessage arrives, and gating on session_id caused
+            # shift-tab into plan mode right after launch to silently no-op
+            # the SDK call — the CLI would then reject ExitPlanMode at
+            # validateInput with "you are not in plan mode".
+            # "planSwarm" is claudechic-specific; the SDK doesn't know it.
+            if self.client and mode != "planSwarm":
                 await self.client.set_permission_mode(cast(PermissionMode, mode))
             if self.observer:
                 self.observer.on_permission_mode_changed(self)

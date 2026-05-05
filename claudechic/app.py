@@ -2882,10 +2882,28 @@ class ChatApp(App):
         ]
         text_option = ("deny", "No, stay in plan mode")
 
-        async with self._show_prompt(
-            SelectionPrompt("Execute plan?", options, text_option), agent
-        ) as prompt:
-            choice = await prompt.wait()
+        try:
+            async with self._show_prompt(
+                SelectionPrompt("Execute plan?", options, text_option), agent
+            ) as prompt:
+                choice = await prompt.wait()
+        except Exception as e:
+            # If prompting fails, surface it instead of letting the SDK
+            # silently mark the tool as denied. Hand feedback back to Claude
+            # so the user isn't left wondering what happened.
+            log.exception("ExitPlanMode prompt failed: %s", e)
+            self.notify(
+                f"ExitPlanMode prompt failed: {e}. Staying in plan mode.",
+                severity="error",
+                timeout=10,
+            )
+            return PermissionResponse(
+                PermissionChoice.DENY,
+                alternative_message=(
+                    f"The ExitPlanMode prompt failed in the UI ({e!r}). "
+                    "Stay in plan mode and tell the user what happened."
+                ),
+            )
 
         # Track the response
         self.run_worker(
