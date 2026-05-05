@@ -2860,9 +2860,18 @@ class ChatApp(App):
         if not plan_content and plan_path and plan_path.exists():
             plan_content = plan_path.read_text()
 
+        # Pick the auto-approve target from the user's configured default mode.
+        # If they've set `auto` in settings.json, exiting plan mode lands them
+        # in `auto`; otherwise we fall back to `acceptEdits` (legacy behavior).
+        configured = get_default_permission_mode(agent.cwd)
+        auto_target = "auto" if configured == "auto" else "acceptEdits"
+        auto_desc = (
+            "enable auto mode" if auto_target == "auto" else "auto-approve edits"
+        )
+
         options = [
-            ("clear_auto", "Yes, clear context and auto-approve edits"),
-            ("auto", "Yes, auto-approve edits"),
+            ("clear_auto", f"Yes, clear context and {auto_desc}"),
+            ("auto", f"Yes, {auto_desc}"),
             ("manual", "Yes, manually approve edits"),
         ]
         text_option = ("deny", "No, stay in plan mode")
@@ -2904,14 +2913,15 @@ class ChatApp(App):
             # Execute plan in fresh session immediately
             agent.pending_plan_execution = {
                 "plan": plan_content or "No plan content found.",
-                "mode": "acceptEdits",
+                "mode": auto_target,
                 "plan_path": plan_path,
             }
             self._execute_plan_fresh(agent)
             return PermissionResponse(PermissionChoice.DENY)
         elif choice == "auto":
-            await agent.set_permission_mode("acceptEdits")
-            self.notify("Auto-edit enabled (Shift+Tab to disable)")
+            await agent.set_permission_mode(auto_target)
+            label = "Auto" if auto_target == "auto" else "Auto-edit"
+            self.notify(f"{label} enabled (Shift+Tab to cycle)")
             return PermissionResponse(PermissionChoice.ALLOW)
         elif choice == "manual":
             await agent.set_permission_mode("default")
