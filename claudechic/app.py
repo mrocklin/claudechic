@@ -628,6 +628,11 @@ class ChatApp(App):
         # Clear VIRTUAL_ENV so agents in worktrees use their own venv
         if os.environ.get("VIRTUAL_ENV"):
             env["VIRTUAL_ENV"] = ""
+        # Override the SDK's default entrypoint of "sdk-py". Claude Code's
+        # /resume picker filters out sessions whose entrypoint is in
+        # {"sdk-cli", "sdk-ts", "sdk-py"}, so claudechic-created sessions
+        # otherwise wouldn't appear when the user runs `claude` directly.
+        env["CLAUDE_CODE_ENTRYPOINT"] = "claudechic"
 
         return ClaudeAgentOptions(
             permission_mode="bypassPermissions"
