@@ -57,6 +57,7 @@ from claudechic.agent import (
     ImageAttachment,
     ToolUse,
     get_default_permission_mode,
+    model_supports_auto_mode,
 )
 from claudechic.agent_manager import AgentManager
 from claudechic.analytics import capture
@@ -520,17 +521,39 @@ class ChatApp(App):
                 self.input_container.remove_class("hidden")
 
     def action_cycle_permission_mode(self) -> None:
-        """Cycle permission mode: default -> acceptEdits -> plan -> auto -> default."""
+        """Cycle permission mode: default -> acceptEdits -> plan -> auto -> default.
+
+        Skips "auto" when the active model doesn't support it (auto is
+        Opus-only — the CLI rejects it on Sonnet/Haiku with "this model
+        does not have Auto mode" and the unhandled exception used to
+        crash the app).
+        """
         if self._agent:
             agent = self._agent  # Capture for closure
             modes = ["default", "acceptEdits", "plan", "auto"]
             current = agent.permission_mode
-            next_idx = (modes.index(current) + 1) % len(modes)
+            # If we're sitting in a non-UI mode (bypassPermissions, dontAsk),
+            # treat "default" as the cursor so we still advance somewhere sane.
+            try:
+                cursor = modes.index(current)
+            except ValueError:
+                cursor = 0
+            next_idx = (cursor + 1) % len(modes)
             next_mode = modes[next_idx]
+            if next_mode == "auto" and not model_supports_auto_mode(agent.model):
+                # Skip "auto"; wrap to "default".
+                next_mode = "default"
 
-            # Schedule the async call
+            # Schedule the async call. Defensive catch handles the residual
+            # case where set_permission_mode is rejected by the SDK
+            # despite our pre-check (e.g. model metadata is unexpected).
             async def set_mode():
-                await agent.set_permission_mode(next_mode)
+                try:
+                    await agent.set_permission_mode(next_mode)
+                except ValueError as e:
+                    self.notify(
+                        f"Cannot set {next_mode} mode: {e}", severity="warning"
+                    )
 
             self.run_worker(set_mode(), exclusive=False)
 
@@ -2041,6 +2064,21 @@ class ChatApp(App):
             return
         old_model = agent.model or "default"
         agent.model = model
+        # Auto mode is Opus-only. If the user switches Opus -> Sonnet/Haiku
+        # while currently in Auto, the CLI will reject it on the next
+        # control_request — pre-emptively drop the agent back to acceptEdits
+        # so the UI stays in sync and the user gets a clear notice.
+        if (
+            agent.permission_mode == "auto"
+            and not model_supports_auto_mode(model)
+        ):
+            agent.permission_mode = "acceptEdits"
+            if agent.observer:
+                agent.observer.on_permission_mode_changed(agent)
+            self.notify(
+                "Auto mode requires Opus — reverted to Auto-edit.",
+                severity="warning",
+            )
         self.run_worker(
             capture(
                 "model_changed",

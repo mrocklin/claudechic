@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from claude_agent_sdk import PermissionResultAllow
 
-from claudechic.agent import Agent, get_default_permission_mode, to_ui_permission_mode
+from claudechic.agent import (
+    Agent,
+    get_default_permission_mode,
+    model_supports_auto_mode,
+    to_ui_permission_mode,
+)
 
 
 def _write_settings(path: Path, default_mode: str) -> None:
@@ -68,6 +73,48 @@ def test_to_ui_permission_mode_collapses_sdk_only_modes():
 def test_to_ui_permission_mode_passes_ui_modes_through():
     for mode in ("default", "acceptEdits", "plan", "auto"):
         assert to_ui_permission_mode(mode) == mode
+
+
+def test_model_supports_auto_mode_opus():
+    """Auto mode is Opus-only."""
+    assert model_supports_auto_mode("opus") is True
+    assert model_supports_auto_mode("claude-opus-4-7") is True
+    assert model_supports_auto_mode("Opus") is True
+
+
+def test_model_supports_auto_mode_non_opus():
+    """Sonnet, Haiku, and other models do not support auto mode."""
+    assert model_supports_auto_mode("sonnet") is False
+    assert model_supports_auto_mode("haiku") is False
+    assert model_supports_auto_mode("claude-sonnet-4-7") is False
+
+
+def test_model_supports_auto_mode_none_is_permissive():
+    """None means SDK default — let the SDK decide. Be permissive."""
+    assert model_supports_auto_mode(None) is True
+
+
+@pytest.mark.asyncio
+async def test_set_permission_mode_rolls_back_on_sdk_error(tmp_path):
+    """If the CLI rejects "auto" (e.g. on Sonnet), the agent rolls back
+    to its prior mode and raises ValueError so the caller can render a
+    friendly message instead of crashing."""
+    agent = Agent(name="t", cwd=tmp_path, permission_mode="plan")
+    mock_client = MagicMock()
+    mock_client.set_permission_mode = AsyncMock(
+        side_effect=Exception("this model does not have Auto mode")
+    )
+    agent.client = mock_client
+    observer = MagicMock()
+    agent.observer = observer
+
+    with pytest.raises(ValueError, match="Auto mode"):
+        await agent.set_permission_mode("auto")
+
+    # Mode rolled back to the prior value, not stuck on "auto".
+    assert agent.permission_mode == "plan"
+    # Observer was notified of the rollback so the footer re-syncs.
+    observer.on_permission_mode_changed.assert_called_with(agent)
 
 
 @pytest.mark.asyncio

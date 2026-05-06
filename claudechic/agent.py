@@ -127,6 +127,20 @@ _SDK_PERMISSION_MODES = frozenset(
 _UI_PERMISSION_MODES = frozenset({"default", "acceptEdits", "plan", "auto"})
 
 
+def model_supports_auto_mode(model: str | None) -> bool:
+    """Return True if the model supports the "auto" permission mode.
+
+    The CLI restricts "auto" (a model classifier that approves/denies tool
+    calls) to Opus. Sonnet, Haiku, and other models reject the mode with
+    "this model does not have Auto mode". `None` means SDK default — we
+    can't tell what it'll resolve to, so be permissive and let the SDK
+    reject it if appropriate.
+    """
+    if model is None:
+        return True
+    return "opus" in model.lower()
+
+
 def get_default_permission_mode(cwd: Path) -> PermissionMode:
     """Resolve ``permissions.defaultMode`` from Claude settings.json layers.
 
@@ -1032,23 +1046,40 @@ Key Rules:
 
         Args:
             mode: One of 'default', 'acceptEdits', 'plan', 'auto'
+
+        Raises:
+            ValueError: If the SDK rejects the mode (e.g. "auto" on a
+                non-Opus model). The agent's prior mode is restored before
+                raising so the UI state stays consistent.
         """
         assert mode in _UI_PERMISSION_MODES, f"Invalid permission mode: {mode}"
-        if self.permission_mode != mode:
-            self.permission_mode = mode
-            # Fetch plan path when entering plan mode
-            if mode == "plan":
-                await self.ensure_plan_path()
-            # Push mode to SDK as soon as the subprocess is connected.
-            # Do NOT gate on self.session_id: the control request works before
-            # the `init` SystemMessage arrives, and gating on session_id caused
-            # shift-tab into plan mode right after launch to silently no-op
-            # the SDK call — the CLI would then reject ExitPlanMode at
-            # validateInput with "you are not in plan mode".
-            if self.client:
+        if self.permission_mode == mode:
+            return
+        previous_mode = self.permission_mode
+        self.permission_mode = mode
+        # Fetch plan path when entering plan mode
+        if mode == "plan":
+            await self.ensure_plan_path()
+        # Push mode to SDK as soon as the subprocess is connected.
+        # Do NOT gate on self.session_id: the control request works before
+        # the `init` SystemMessage arrives, and gating on session_id caused
+        # shift-tab into plan mode right after launch to silently no-op
+        # the SDK call — the CLI would then reject ExitPlanMode at
+        # validateInput with "you are not in plan mode".
+        if self.client:
+            try:
                 await self.client.set_permission_mode(cast(PermissionMode, mode))
-            if self.observer:
-                self.observer.on_permission_mode_changed(self)
+            except Exception as e:
+                # SDK/CLI rejected the mode (e.g. "auto" on a non-Opus
+                # model). Roll back so the UI doesn't show a mode the CLI
+                # isn't actually in, then surface a typed error so the
+                # caller can render a friendly message.
+                self.permission_mode = previous_mode
+                if self.observer:
+                    self.observer.on_permission_mode_changed(self)
+                raise ValueError(str(e)) from e
+        if self.observer:
+            self.observer.on_permission_mode_changed(self)
 
     def _build_message_with_images(self, prompt: str) -> dict[str, Any]:
         """Build SDK message with text and images."""

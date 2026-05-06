@@ -55,6 +55,46 @@ async def test_permission_mode_cycle(mock_sdk):
 
 
 @pytest.mark.asyncio
+async def test_permission_mode_cycle_skips_auto_on_sonnet(mock_sdk):
+    """On non-Opus models, Shift+Tab wraps default -> acceptEdits -> plan -> default.
+
+    Regression: cycling onto "auto" on Sonnet/Haiku used to crash the app
+    because the CLI rejects auto mode for non-Opus models with
+    "this model does not have Auto mode".
+    """
+    app = ChatApp()
+    async with app.run_test() as pilot:
+        assert app._agent is not None
+        # Pin the agent to Sonnet so the cycler should skip "auto".
+        app._agent.model = "sonnet"
+        assert app._agent.permission_mode == "default"
+
+        await pilot.press("shift+tab")
+        assert app._agent.permission_mode == "acceptEdits"
+
+        await pilot.press("shift+tab")
+        assert app._agent.permission_mode == "plan"
+
+        # On Sonnet, the next step skips "auto" and wraps to "default".
+        await pilot.press("shift+tab")
+        assert app._agent.permission_mode == "default"
+
+
+@pytest.mark.asyncio
+async def test_permission_mode_cycle_lands_on_auto_for_opus(mock_sdk):
+    """On Opus, the cycler still includes "auto" as the fourth step."""
+    app = ChatApp()
+    async with app.run_test() as pilot:
+        assert app._agent is not None
+        app._agent.model = "opus"
+
+        await pilot.press("shift+tab")
+        await pilot.press("shift+tab")
+        await pilot.press("shift+tab")
+        assert app._agent.permission_mode == "auto"
+
+
+@pytest.mark.asyncio
 async def test_permission_mode_footer_updates(mock_sdk):
     """Footer reflects permission mode state."""
     app = ChatApp()
