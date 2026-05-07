@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from claude_agent_sdk import PermissionResultAllow
@@ -90,3 +90,54 @@ async def test_handle_permission_auto_mode_approves_all(tmp_path):
     for tool, inp in cases:
         result = await agent._handle_permission(tool, inp, ctx)
         assert isinstance(result, PermissionResultAllow), tool
+
+
+@pytest.mark.asyncio
+async def test_set_permission_mode_rolls_back_on_sdk_rejection(tmp_path):
+    """SDK rejection (e.g. "auto" on Sonnet) rolls back, caches, raises ValueError.
+
+    This is the contract the UI relies on: the agent's prior mode is
+    preserved (so the footer doesn't lie about what the CLI is in),
+    ``unsupported_modes`` records the rejection so the UI can avoid
+    re-asking, and a typed ``ValueError`` lets callers render a friendly
+    message instead of crashing.
+    """
+    agent = Agent(name="t", cwd=tmp_path, permission_mode="acceptEdits")
+    agent.client = MagicMock()
+    agent.client.set_permission_mode = AsyncMock(
+        side_effect=Exception("this model does not have Auto mode")
+    )
+
+    with pytest.raises(ValueError, match="Auto mode"):
+        await agent.set_permission_mode("auto")
+
+    assert agent.permission_mode == "acceptEdits"  # rolled back
+    assert "auto" in agent.unsupported_modes
+
+
+@pytest.mark.asyncio
+async def test_set_permission_mode_no_op_when_already_at_target(tmp_path):
+    """Setting the same mode is a no-op — no SDK call, no rollback drama."""
+    agent = Agent(name="t", cwd=tmp_path, permission_mode="auto")
+    agent.client = MagicMock()
+    agent.client.set_permission_mode = AsyncMock()
+
+    await agent.set_permission_mode("auto")
+
+    agent.client.set_permission_mode.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_set_permission_mode_clears_unsupported_on_disconnect(tmp_path):
+    """Cached SDK rejections are tied to the current connection; reconnect resets.
+
+    A user could be on Sonnet (auto rejected), switch to Opus, and
+    reasonably expect "auto" to work again. ``disconnect`` is the seam
+    where that capability might change, so we clear the cache there.
+    """
+    agent = Agent(name="t", cwd=tmp_path, permission_mode="acceptEdits")
+    agent.unsupported_modes.add("auto")
+
+    await agent.disconnect()
+
+    assert agent.unsupported_modes == set()

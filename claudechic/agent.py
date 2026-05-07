@@ -239,6 +239,11 @@ class Agent:
         self.file_index: FileIndex | None = None
         self.todos: list[dict] = []
         self.permission_mode: str = permission_mode  # default, acceptEdits, plan, auto
+        # Modes the SDK has rejected for this agent (e.g. "auto" on Sonnet —
+        # auto is Opus-only). Populated reactively when set_permission_mode
+        # raises; consulted by the UI cycle so we don't repeatedly try the
+        # same mode. Cleared on disconnect (model/CLI may differ on reconnect).
+        self.unsupported_modes: set[str] = set()
         self.session_allowed_tools: set[str] = set()  # Tools allowed for this session
         self._pending_followup: str | None = None  # Auto-send after current response
         self.model: str | None = None  # Model override (None = SDK default)
@@ -328,6 +333,9 @@ class Agent:
                 pass
             self.client = None
         self._claude_pid = None
+        # Cached SDK rejections are tied to the prior connection's CLI/model;
+        # a reconnect (e.g. model switch) may have different capabilities.
+        self.unsupported_modes.clear()
 
         # IMPORTANT: This cleanup is critical - do not remove!
         # See .ai-docs/anyio-cancel-scope-bug.md for full explanation.
@@ -1032,23 +1040,46 @@ Key Rules:
 
         Args:
             mode: One of 'default', 'acceptEdits', 'plan', 'auto'
+
+        Raises:
+            ValueError: If the SDK rejects the mode (e.g. ``"auto"`` on a
+                non-Opus model). The agent's prior mode is restored before
+                raising and ``mode`` is added to ``unsupported_modes`` so
+                callers can avoid retrying. We treat the SDK as the source
+                of truth on which modes a model supports rather than
+                hardcoding model-name heuristics.
         """
         assert mode in _UI_PERMISSION_MODES, f"Invalid permission mode: {mode}"
-        if self.permission_mode != mode:
-            self.permission_mode = mode
-            # Fetch plan path when entering plan mode
-            if mode == "plan":
-                await self.ensure_plan_path()
-            # Push mode to SDK as soon as the subprocess is connected.
-            # Do NOT gate on self.session_id: the control request works before
-            # the `init` SystemMessage arrives, and gating on session_id caused
-            # shift-tab into plan mode right after launch to silently no-op
-            # the SDK call — the CLI would then reject ExitPlanMode at
-            # validateInput with "you are not in plan mode".
-            if self.client:
+        if self.permission_mode == mode:
+            return
+        previous = self.permission_mode
+        self.permission_mode = mode
+        # Fetch plan path when entering plan mode
+        if mode == "plan":
+            await self.ensure_plan_path()
+        # Push mode to SDK as soon as the subprocess is connected.
+        # Do NOT gate on self.session_id: the control request works before
+        # the `init` SystemMessage arrives, and gating on session_id caused
+        # shift-tab into plan mode right after launch to silently no-op
+        # the SDK call — the CLI would then reject ExitPlanMode at
+        # validateInput with "you are not in plan mode".
+        if self.client:
+            try:
                 await self.client.set_permission_mode(cast(PermissionMode, mode))
-            if self.observer:
-                self.observer.on_permission_mode_changed(self)
+            except Exception as e:
+                # SDK/CLI rejected the mode. Roll back so the UI doesn't
+                # show a mode the CLI isn't actually in, remember that this
+                # mode is unsupported on this connection, and surface a
+                # typed error so the caller can render a friendly message.
+                # No observer notify: the optimistic ``self.permission_mode = mode``
+                # above never reached the observer (we notify only at the end
+                # of a successful call), so rollback restores the state the
+                # observer already has.
+                self.permission_mode = previous
+                self.unsupported_modes.add(mode)
+                raise ValueError(str(e)) from e
+        if self.observer:
+            self.observer.on_permission_mode_changed(self)
 
     def _build_message_with_images(self, prompt: str) -> dict[str, Any]:
         """Build SDK message with text and images."""

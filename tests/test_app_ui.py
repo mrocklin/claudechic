@@ -55,6 +55,55 @@ async def test_permission_mode_cycle(mock_sdk):
 
 
 @pytest.mark.asyncio
+async def test_permission_mode_cycle_skips_sdk_rejected(mock_sdk):
+    """Shift+Tab through a mode the SDK rejects ("auto" on Sonnet) advances past it.
+
+    First press lands on the unsupported mode, the SDK rejects, the cycle
+    catches the ValueError and advances to the next candidate — so a
+    single Shift+Tab from "plan" goes straight to "default" rather than
+    crashing or sitting in "auto". On subsequent cycles, the cached
+    rejection causes a silent skip (no second SDK round-trip).
+    """
+    app = ChatApp()
+    async with app.run_test() as pilot:
+        agent = app._agent
+        assert agent is not None
+        client = agent.client
+        assert client is not None
+
+        # Mock the SDK to reject "auto" specifically (mimicking Sonnet/Haiku).
+        async def reject_auto(mode):
+            if mode == "auto":
+                raise Exception("this model does not have Auto mode")
+
+        client.set_permission_mode = AsyncMock(side_effect=reject_auto)
+
+        # Walk default -> acceptEdits -> plan
+        await pilot.press("shift+tab")
+        await pilot.press("shift+tab")
+        assert agent.permission_mode == "plan"
+
+        # Next press would be "auto" — SDK rejects, cycle advances to "default".
+        await pilot.press("shift+tab")
+        await wait_for_workers(app)
+        assert agent.permission_mode == "default"
+        assert "auto" in agent.unsupported_modes
+
+        # Second pass: cycle should silently skip "auto" (no extra SDK call).
+        client.set_permission_mode.reset_mock()
+        await pilot.press("shift+tab")  # default -> acceptEdits
+        await pilot.press("shift+tab")  # acceptEdits -> plan
+        await pilot.press("shift+tab")  # plan -> (skip auto) -> default
+        await wait_for_workers(app)
+        assert agent.permission_mode == "default"
+        # Three transitions, three SDK calls — none for "auto".
+        called_modes = [
+            call.args[0] for call in client.set_permission_mode.call_args_list
+        ]
+        assert "auto" not in called_modes
+
+
+@pytest.mark.asyncio
 async def test_permission_mode_footer_updates(mock_sdk):
     """Footer reflects permission mode state."""
     app = ChatApp()

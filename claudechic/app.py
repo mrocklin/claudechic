@@ -112,6 +112,16 @@ log = logging.getLogger(__name__)
 # Pattern to strip SDK's <tool_use_error> tags from error messages
 TOOL_USE_ERROR_PATTERN = re.compile(r"</?tool_use_error>")
 
+# Friendly labels for the permission modes the UI can land in. Used by the
+# Shift+Tab cycle and the plan-exit fallback notify so messages stay
+# consistent (e.g. ``acceptEdits`` shows as "Auto-edit", not "Acceptedits").
+_PERMISSION_MODE_LABELS = {
+    "default": "Default",
+    "acceptEdits": "Auto-edit",
+    "plan": "Plan",
+    "auto": "Auto",
+}
+
 
 def _categorize_cli_error(e: CLIConnectionError) -> str:
     """Categorize CLI connection error without exposing user paths."""
@@ -520,28 +530,98 @@ class ChatApp(App):
                 self.input_container.remove_class("hidden")
 
     def action_cycle_permission_mode(self) -> None:
-        """Cycle permission mode: default -> acceptEdits -> plan -> auto -> default."""
-        if self._agent:
-            agent = self._agent  # Capture for closure
-            modes = ["default", "acceptEdits", "plan", "auto"]
-            current = agent.permission_mode
-            next_idx = (modes.index(current) + 1) % len(modes)
-            next_mode = modes[next_idx]
+        """Cycle permission mode: default -> acceptEdits -> plan -> auto -> default.
 
-            # Schedule the async call
-            async def set_mode():
-                await agent.set_permission_mode(next_mode)
+        Skips modes the SDK has rejected for this agent (cached in
+        ``agent.unsupported_modes``) — e.g. ``"auto"`` is Opus-only, so on
+        Sonnet/Haiku the CLI rejects it and we never offer it again on this
+        connection. If the SDK rejects on the first attempt of an
+        unknown-unsupported mode, we advance to the next candidate so a
+        single Shift+Tab always moves the user forward.
+        """
+        if not self._agent:
+            return
+        agent = self._agent  # Capture for closure
+        modes = ["default", "acceptEdits", "plan", "auto"]
+        # If we're sitting in a non-UI mode (bypassPermissions, dontAsk),
+        # treat "before default" as the cursor so we still advance somewhere sane.
+        try:
+            cursor = modes.index(agent.permission_mode)
+        except ValueError:
+            cursor = -1
 
-            self.run_worker(set_mode(), exclusive=False)
+        async def set_mode():
+            for offset in range(1, len(modes) + 1):
+                candidate = modes[(cursor + offset) % len(modes)]
+                if candidate == agent.permission_mode:
+                    continue
+                if candidate in agent.unsupported_modes:
+                    continue
+                try:
+                    await agent.set_permission_mode(candidate)
+                except ValueError as e:
+                    # SDK rejected — set_permission_mode has cached it in
+                    # unsupported_modes. Try the next one in the cycle so
+                    # the user's Shift+Tab moves forward instead of bouncing.
+                    self.notify(
+                        f"{_PERMISSION_MODE_LABELS[candidate]} mode unavailable: {e}",
+                        severity="warning",
+                    )
+                    continue
+                self.notify(f"Mode: {_PERMISSION_MODE_LABELS[candidate]}")
+                return
+            self.notify("No alternate permission mode available", severity="warning")
 
-            # Show notification with friendly names
-            display = {
-                "default": "Default",
-                "auto": "Auto",
-                "acceptEdits": "Auto-edit",
-                "plan": "Plan",
-            }
-            self.notify(f"Mode: {display[next_mode]}")
+        self.run_worker(set_mode(), exclusive=False)
+
+    async def _set_mode_with_fallback(
+        self,
+        agent: Agent,
+        target: str,
+        fallback: str = "acceptEdits",
+    ) -> str:
+        """Set ``target`` permission mode; on SDK rejection, fall back to ``fallback``.
+
+        Used at plan-exit / plan-execution seams where the UX intent is
+        "don't make me approve every edit." If the chosen mode (typically
+        ``"auto"``) isn't supported on the active model, we drop to
+        ``acceptEdits`` rather than crashing or silently denying. Returns
+        the mode actually in effect after the call.
+
+        If ``target`` is already in ``agent.unsupported_modes`` (we've seen
+        the SDK reject it earlier this connection — e.g. user Shift+Tab'd
+        into auto on Sonnet, then exits plan mode picking "auto"), skip
+        the round-trip and go straight to ``fallback`` with the same notice.
+        """
+        target_label = _PERMISSION_MODE_LABELS.get(target, target)
+        fallback_label = _PERMISSION_MODE_LABELS[fallback]
+
+        async def apply_fallback() -> str:
+            if fallback == agent.permission_mode:
+                return fallback
+            try:
+                await agent.set_permission_mode(fallback)
+                return fallback
+            except ValueError:
+                return agent.permission_mode
+
+        if target in agent.unsupported_modes:
+            self.notify(
+                f"{target_label} mode unavailable on this model; "
+                f"using {fallback_label}.",
+                severity="warning",
+            )
+            return await apply_fallback()
+
+        try:
+            await agent.set_permission_mode(target)
+            return target
+        except ValueError as e:
+            self.notify(
+                f"{target_label} mode unavailable ({e}); using {fallback_label}.",
+                severity="warning",
+            )
+            return await apply_fallback()
 
     def _update_footer_permission_mode(self) -> None:
         """Update footer to reflect current agent's permission mode."""
@@ -2262,8 +2342,9 @@ class ChatApp(App):
             self.plan_section.set_plan(plan_path)
             self._layout_sidebar_contents()
 
-            # Set permission mode and send plan
-            await agent.set_permission_mode(mode)
+            # Set permission mode (falling back to acceptEdits if e.g. "auto"
+            # is rejected) and send the plan.
+            await self._set_mode_with_fallback(agent, mode)
             prompt = f"Execute this plan:\n\n{plan_content}"
             await agent.send(prompt)
 
@@ -2924,8 +3005,8 @@ class ChatApp(App):
             self._execute_plan_fresh(agent)
             return PermissionResponse(PermissionChoice.DENY)
         elif choice == "auto":
-            await agent.set_permission_mode(auto_target)
-            label = "Auto" if auto_target == "auto" else "Auto-edit"
+            target = await self._set_mode_with_fallback(agent, auto_target)
+            label = "Auto" if target == "auto" else "Auto-edit"
             self.notify(f"{label} enabled (Shift+Tab to cycle)")
             return PermissionResponse(PermissionChoice.ALLOW)
         elif choice == "manual":
