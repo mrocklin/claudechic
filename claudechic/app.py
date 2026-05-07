@@ -123,6 +123,52 @@ _PERMISSION_MODE_LABELS = {
 }
 
 
+def _plan_mode_pre_tool_use_decision(hook_input: dict) -> dict:
+    """PreToolUse hook decision for plan mode.
+
+    Pure function — extracted from the closure in ``_plan_mode_hooks`` so
+    it can be unit-tested directly. Returns the SDK hook output:
+
+    - ``{}`` to allow the tool to proceed through normal permission flow.
+    - A ``hookSpecificOutput`` deny payload (per
+      ``claude_agent_sdk.types.PreToolUseHookSpecificOutput``) to block.
+
+    Bash is deliberately not blocked: the CLI's plan mode prompt instructs
+    the model to avoid "non-readonly tools," but read-only Bash (ls, find,
+    git status, etc.) is legitimate during exploration — blocking it all
+    trips up Explore subagents that need Bash for read-only ops.
+    """
+    blocked_tools = {"Edit", "Write", "NotebookEdit"}
+    plans_dir = Path.home() / ".claude" / "plans"
+
+    permission_mode = hook_input.get("permission_mode", "default")
+    tool_name = hook_input.get("tool_name", "")
+    tool_input = hook_input.get("tool_input", {})
+
+    if permission_mode != "plan" or tool_name not in blocked_tools:
+        return {}
+
+    # Allow Write/Edit to files under ~/.claude/plans/
+    if tool_name in ("Write", "Edit"):
+        file_path = tool_input.get("file_path", "")
+        if file_path:
+            resolved = Path(file_path).expanduser().resolve()
+            if resolved.is_relative_to(plans_dir):
+                return {}
+
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                f"{tool_name} is not available in plan mode. "
+                "Write your plan to the plan file and use "
+                "ExitPlanMode when ready."
+            ),
+        },
+    }
+
+
 def _categorize_cli_error(e: CLIConnectionError) -> str:
     """Categorize CLI connection error without exposing user paths."""
     msg = str(e)
@@ -653,35 +699,14 @@ class ChatApp(App):
         self._show_system_info(message, "warning", None)
 
     def _plan_mode_hooks(self) -> "dict[HookEvent, list[HookMatcher]]":
-        """Create hooks for plan mode enforcement."""
-        # Tools that should be blocked in plan mode (except plan file writes)
-        blocked_tools = {"Edit", "Write", "Bash", "NotebookEdit"}
-        plans_dir = str(Path.home() / ".claude" / "plans")
+        """Register the plan-mode PreToolUse hook with the SDK."""
 
         async def block_mutating_tools(
             hook_input: dict,
             match: str | None,  # noqa: ARG001
             ctx: object,  # noqa: ARG001
         ) -> dict:
-            """PreToolUse hook: block Edit/Write/Bash in plan mode (allow plan file)."""
-            permission_mode = hook_input.get("permission_mode", "default")
-            tool_name = hook_input.get("tool_name", "")
-            tool_input = hook_input.get("tool_input", {})
-
-            if permission_mode == "plan" and tool_name in blocked_tools:
-                # Allow Write/Edit to files in ~/.claude/plans/
-                if tool_name in ("Write", "Edit"):
-                    file_path = tool_input.get("file_path", "")
-                    if file_path:
-                        # Expand ~ and resolve to absolute path
-                        resolved = str(Path(file_path).expanduser().resolve())
-                        if resolved.startswith(plans_dir):
-                            return {}  # Allow it
-                return {
-                    "decision": "block",
-                    "reason": f"{tool_name} is not available in plan mode. Write your plan to the plan file and use ExitPlanMode when ready.",
-                }
-            return {}
+            return _plan_mode_pre_tool_use_decision(hook_input)
 
         return {
             "PreToolUse": [HookMatcher(matcher=None, hooks=[block_mutating_tools])],  # type: ignore[arg-type]

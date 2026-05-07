@@ -7,9 +7,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from claude_agent_sdk import PermissionResultAllow
+from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
 from claudechic.agent import Agent, get_default_permission_mode, to_ui_permission_mode
+from claudechic.app import _plan_mode_pre_tool_use_decision
 
 
 def _write_settings(path: Path, default_mode: str) -> None:
@@ -141,3 +142,112 @@ async def test_set_permission_mode_clears_unsupported_on_disconnect(tmp_path):
     await agent.disconnect()
 
     assert agent.unsupported_modes == set()
+
+
+# ---------------------------------------------------------------------------
+# Plan mode enforcement
+#
+# Hook (app.py) is the primary enforcer; agent._handle_permission keeps a
+# defense-in-depth deny + captures plan_path for the ExitPlanMode UI.
+# ---------------------------------------------------------------------------
+
+
+def _hook_input(mode: str, tool: str, **inp: object) -> dict:
+    return {"permission_mode": mode, "tool_name": tool, "tool_input": inp}
+
+
+def test_plan_mode_hook_allows_bash():
+    """Bash is read-only-friendly and must NOT be blocked in plan mode.
+
+    Regression: we used to block all Bash, which broke Explore subagents
+    that rely on Bash for `find`, `git ls-files`, etc.
+    """
+    out = _plan_mode_pre_tool_use_decision(
+        _hook_input("plan", "Bash", command="git status")
+    )
+    assert out == {}
+
+
+def test_plan_mode_hook_denies_edit_with_modern_shape():
+    """Edit on a non-plan-file is denied via the modern hookSpecificOutput shape."""
+    out = _plan_mode_pre_tool_use_decision(
+        _hook_input(
+            "plan", "Edit", file_path="/tmp/foo.py", old_string="a", new_string="b"
+        )
+    )
+    spec = out["hookSpecificOutput"]
+    assert spec["hookEventName"] == "PreToolUse"
+    assert spec["permissionDecision"] == "deny"
+    assert "plan mode" in spec["permissionDecisionReason"]
+
+
+def test_plan_mode_hook_denies_write_and_notebook_edit():
+    for tool in ("Write", "NotebookEdit"):
+        out = _plan_mode_pre_tool_use_decision(
+            _hook_input("plan", tool, file_path="/tmp/foo")
+        )
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny", tool
+
+
+def test_plan_mode_hook_allows_writes_to_plan_file(tmp_path, monkeypatch):
+    """Writes under ~/.claude/plans/ are the one carve-out."""
+    monkeypatch.setattr("claudechic.app.Path.home", lambda: tmp_path)
+    plan_file = tmp_path / ".claude" / "plans" / "my-plan.md"
+    plan_file.parent.mkdir(parents=True)
+    out = _plan_mode_pre_tool_use_decision(
+        _hook_input("plan", "Write", file_path=str(plan_file), content="...")
+    )
+    assert out == {}
+
+
+def test_plan_mode_hook_rejects_lookalike_plans_dir(tmp_path, monkeypatch):
+    """`startswith` would mistakenly match `~/.claude/plans-evil/`; is_relative_to doesn't."""
+    monkeypatch.setattr("claudechic.app.Path.home", lambda: tmp_path)
+    sneaky = tmp_path / ".claude" / "plans-evil" / "x.md"
+    sneaky.parent.mkdir(parents=True)
+    out = _plan_mode_pre_tool_use_decision(
+        _hook_input("plan", "Write", file_path=str(sneaky), content="x")
+    )
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_plan_mode_hook_passthrough_outside_plan_mode():
+    """Hook is a no-op when not in plan mode."""
+    for mode in ("default", "acceptEdits", "auto"):
+        out = _plan_mode_pre_tool_use_decision(
+            _hook_input(
+                mode, "Edit", file_path="/tmp/foo", old_string="a", new_string="b"
+            )
+        )
+        assert out == {}, mode
+
+
+@pytest.mark.asyncio
+async def test_handle_permission_plan_mode_captures_plan_path(tmp_path, monkeypatch):
+    """Plan-file Edit/Write captures agent.plan_path for the ExitPlanMode UI."""
+    monkeypatch.setattr("claudechic.agent.Path.home", lambda: tmp_path)
+    plan_file = tmp_path / ".claude" / "plans" / "session.md"
+    plan_file.parent.mkdir(parents=True)
+
+    agent = Agent(name="t", cwd=tmp_path, permission_mode="plan")
+    ctx = MagicMock()
+    result = await agent._handle_permission(
+        "Write", {"file_path": str(plan_file), "content": "..."}, ctx
+    )
+
+    assert isinstance(result, PermissionResultAllow)
+    assert agent.plan_path == plan_file.resolve()
+
+
+@pytest.mark.asyncio
+async def test_handle_permission_plan_mode_defense_in_depth_denies(tmp_path):
+    """If the hook misfires and a non-plan-file Edit reaches can_use_tool, deny."""
+    agent = Agent(name="t", cwd=tmp_path, permission_mode="plan")
+    ctx = MagicMock()
+    result = await agent._handle_permission(
+        "Edit",
+        {"file_path": "/tmp/not-a-plan.py", "old_string": "a", "new_string": "b"},
+        ctx,
+    )
+    assert isinstance(result, PermissionResultDeny)
+    assert "plan mode" in result.message

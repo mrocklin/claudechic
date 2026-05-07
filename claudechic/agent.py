@@ -182,14 +182,6 @@ class Agent:
     # Tools to auto-approve when auto_approve_edits is True
     AUTO_EDIT_TOOLS = {ToolName.EDIT, ToolName.WRITE}
 
-    # Tools blocked in plan mode (read-only enforcement)
-    PLAN_MODE_BLOCKED_TOOLS = {
-        ToolName.EDIT,
-        ToolName.WRITE,
-        ToolName.BASH,
-        ToolName.NOTEBOOK_EDIT,
-    }
-
     def __init__(
         self,
         name: str,
@@ -552,7 +544,8 @@ Key Rules:
 - Use AskUserQuestion for requirement clarification
 - Use ExitPlanMode for plan approval (never ask "is this plan okay?" via text)
 - Build plan incrementally by writing/editing the plan file
-- Edit, Write, Bash, and NotebookEdit are NOT available (except writing to the plan file)
+- Edit, Write, and NotebookEdit are NOT available (except writing to the plan file)
+- Bash is available ONLY for read-only inspection: e.g. ls, find, grep, cat, git status, git log, git diff. Do NOT use Bash to install packages, modify files, fetch/pull, commit, push, or change configuration.
 {plan_file_info}
 </system-reminder>
 """
@@ -885,22 +878,35 @@ Key Rules:
         if tool_name.startswith("mcp__chic__"):
             return PermissionResultAllow()
 
-        # Block mutating tools in plan mode (except writes to plan file)
-        # Note: PreToolUse hook in app.py also blocks these; this is a fallback
-        if self.permission_mode == "plan" and tool_name in self.PLAN_MODE_BLOCKED_TOOLS:
-            # Allow Write/Edit to files in ~/.claude/plans/
+        # Plan mode: the PreToolUse hook in app.py
+        # (_plan_mode_pre_tool_use_decision) is the primary enforcer for
+        # mutating tools. We still capture plan_path here (used by the
+        # ExitPlanMode UI) and keep an explicit deny as defense-in-depth
+        # in case the hook misfires.
+        if self.permission_mode == "plan" and tool_name in (
+            ToolName.WRITE,
+            ToolName.EDIT,
+            ToolName.NOTEBOOK_EDIT,
+        ):
             if tool_name in (ToolName.WRITE, ToolName.EDIT):
                 file_path = tool_input.get("file_path", "")
                 if file_path:
                     plans_dir = Path.home() / ".claude" / "plans"
                     resolved = Path(file_path).expanduser().resolve()
-                    if str(resolved).startswith(str(plans_dir)):
-                        self.plan_path = resolved  # Capture for ExitPlanMode display
+                    if resolved.is_relative_to(plans_dir):
+                        self.plan_path = resolved  # for ExitPlanMode display
                         log.info(f"Auto-approved {tool_name} to plan file (plan mode)")
                         return PermissionResultAllow()
-            log.info(f"Denied {tool_name} (plan mode)")
+            log.warning(
+                f"plan-mode {tool_name} reached can_use_tool — "
+                "PreToolUse hook should have denied first"
+            )
             return PermissionResultDeny(
-                message=f"{tool_name} is not available in plan mode. Write your plan to the plan file and use ExitPlanMode when ready.",
+                message=(
+                    f"{tool_name} is not available in plan mode. "
+                    "Write your plan to the plan file and use ExitPlanMode "
+                    "when ready."
+                ),
                 interrupt=False,
             )
 
