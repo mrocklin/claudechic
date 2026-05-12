@@ -7,9 +7,18 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+from claude_agent_sdk import (
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ToolResultBlock,
+)
 
-from claudechic.agent import Agent, get_default_permission_mode, to_ui_permission_mode
+from claudechic.agent import (
+    Agent,
+    ToolUse,
+    get_default_permission_mode,
+    to_ui_permission_mode,
+)
 from claudechic.app import _plan_mode_pre_tool_use_decision
 
 
@@ -251,3 +260,28 @@ async def test_handle_permission_plan_mode_defense_in_depth_denies(tmp_path):
     )
     assert isinstance(result, PermissionResultDeny)
     assert "plan mode" in result.message
+
+
+@pytest.mark.parametrize(
+    "initial,is_error,expected",
+    [
+        # Regression: the ExitPlanMode prompt moves us to "auto" before
+        # returning Allow; the tool result must not stomp that back to default.
+        ("auto", False, "auto"),
+        # Original intent: when nothing else moved us, exiting plan → default.
+        ("plan", False, "default"),
+        # A failed ExitPlanMode shouldn't change anything.
+        ("plan", True, "plan"),
+    ],
+)
+def test_exit_plan_mode_result_preserves_user_chosen_mode(
+    tmp_path, initial, is_error, expected
+):
+    agent = Agent(name="t", cwd=tmp_path, permission_mode=initial)
+    agent.pending_tools["t1"] = ToolUse(id="t1", name="ExitPlanMode", input={})
+
+    agent._handle_tool_result(
+        ToolResultBlock(tool_use_id="t1", content="ok", is_error=is_error)
+    )
+
+    assert agent.permission_mode == expected

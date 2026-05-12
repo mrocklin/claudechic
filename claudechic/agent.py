@@ -842,7 +842,11 @@ Key Rules:
 
             # Update permission mode based on plan mode tools
             if tool.name == ToolName.EXIT_PLAN_MODE and not tool.is_error:
-                self._set_permission_mode_local("default")
+                # Skip the reset if the ExitPlanMode prompt already moved us
+                # to "auto" / "acceptEdits" — stomping that here would desync
+                # from the CLI and silently re-enable permission prompts.
+                if self.permission_mode == "plan":
+                    self._set_permission_mode_local("default")
             elif tool.name == ToolName.ENTER_PLAN_MODE and not tool.is_error:
                 self._set_permission_mode_local("plan")
                 # Fetch plan path asynchronously (needed for ExitPlanMode later)
