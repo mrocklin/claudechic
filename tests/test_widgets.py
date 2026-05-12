@@ -978,3 +978,81 @@ async def test_tool_use_widget_edit_lazy_diff():
         # DiffWidget should now exist
         diffs = widget.query(DiffWidget)
         assert len(diffs) == 1
+
+
+@pytest.mark.asyncio
+async def test_streamed_markdown_fence_survives_recompose():
+    """MarkdownFence body must survive a recompose after streamed updates.
+
+    Regression for Textual issue #6518: upstream
+    ``MarkdownFence._update_from_block`` updates the visible Label but never
+    syncs ``self.code`` / ``self._highlighted_code``. If anything recomposes
+    the fence afterwards (terminal focus, style refresh, layout cascade, text
+    selection), ``compose`` rebuilds the Label from the stale first-chunk
+    value and the code body collapses to a few characters. Patched in
+    :mod:`claudechic._textual_patches`.
+    """
+    import asyncio
+
+    # Importing claudechic applies the textual monkey-patch this test guards.
+    from claudechic._textual_patches import apply_patches
+
+    apply_patches()
+
+    from textual.widgets import Label, Markdown
+    from textual.widgets._markdown import MarkdownFence
+
+    # Sample large enough to span many stream chunks; the per-chunk sleep
+    # makes MarkdownStream's run-loop process each chunk before the next
+    # arrives, which is what creates the incremental fence-update path.
+    sample = (
+        "Example:\n\n"
+        "```python\n"
+        "from langgraph_sdk import get_client\n"
+        "\n"
+        'client = get_client(url="http://localhost:2024")\n'
+        "\n"
+        "result = await client.runs.wait(\n"
+        "    thread_id=None,\n"
+        '    assistant_id="agent",\n'
+        '    input={"messages": [{"role": "user", "content": "hello"}]},\n'
+        ")\n"
+        "\n"
+        "print(result)\n"
+        "```\n"
+    )
+
+    class MdApp(App):
+        def compose(self) -> ComposeResult:
+            yield Markdown("", id="md")
+
+        async def on_mount(self) -> None:
+            md = self.query_one("#md", Markdown)
+            stream = Markdown.get_stream(md)
+            for i in range(0, len(sample), 10):
+                await stream.write(sample[i : i + 10])
+                await asyncio.sleep(0.02)
+            await stream.stop()
+
+    app = MdApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(1.0)
+        fence = app.query_one(MarkdownFence)
+
+        # Sanity check: streaming worked end-to-end and the patch synced state.
+        assert "from langgraph_sdk" in fence.code, (
+            "fence.code never received streamed body — patch did not apply"
+        )
+
+        # Force the failure mode. ``recompose()`` is a deterministic
+        # stand-in for the real-world triggers (focus change, style refresh,
+        # text selection, layout cascade) — anything that re-runs the fence's
+        # ``compose`` and rebuilds the Label from ``_highlighted_code``.
+        await fence.recompose()
+        await pilot.pause(0.3)
+
+        label = fence.query_one("#code-content", Label)
+        body = str(label.render())
+        # Pre-fix, this was '' after recompose. Post-fix, the body is intact.
+        assert "from langgraph_sdk import get_client" in body
+        assert "print(result)" in body
