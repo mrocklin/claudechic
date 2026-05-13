@@ -12,6 +12,17 @@ from claudechic.errors import setup_logging
 setup_logging()
 
 
+def positive_int(value: str) -> int:
+    """Argparse type for positive integers."""
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}")
+    if n <= 0:
+        raise argparse.ArgumentTypeError(f"must be positive, got {n}")
+    return n
+
+
 def main():
     parser = argparse.ArgumentParser(description="Claude Chic")
     parser.add_argument(
@@ -45,6 +56,13 @@ def main():
         "--yolo",
         action="store_true",
         help="Auto-approve all tool uses without prompting (use in sandboxed environments)",
+    )
+    parser.add_argument(
+        "--width",
+        "-w",
+        type=positive_int,
+        default=None,
+        help="Set terminal width for chat column",
     )
     parser.add_argument("prompt", nargs="*", help="Initial prompt to send")
     args = parser.parse_args()
@@ -86,6 +104,7 @@ def main():
             remote_port=args.remote_port,
             skip_permissions=args.dangerously_skip_permissions,
             theme_override=args.theme,
+            width=args.width,
         )
         app.run()
     except (KeyboardInterrupt, SystemExit):
