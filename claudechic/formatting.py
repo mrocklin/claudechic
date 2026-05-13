@@ -18,6 +18,30 @@ DEFAULT_CONTEXT_WINDOW = 200_000
 MAX_HEADER_WIDTH = 70  # Max width for tool headers
 
 
+# --- ANSI escape stripping (ECMA-48 compliant) ---
+
+_ANSI_ESCAPE_RE = re.compile(
+    r"""
+      \x1b \[  [0-9:;?<=>!]* [ -/]* [@-~]     # 7-bit CSI (\x1b[...m)
+    | \x9b     [0-9:;?<=>!]* [ -/]* [@-~]     # 8-bit CSI (\x9b...m)
+    | \x1b []\x5dP^_]  (?:[^\x07\x1b\x9c]*) (?:\x07|\x1b\\|\x9c)?  # OSC/DCS/PM/APC
+    | \x1b [()*/+\-.]  .                       # Charset designation
+    | \x1b [ -/]* [@-~]                        # Other 2-char escapes
+    | [\x90\x98\x9d-\x9f] [^\x07\x1b\x9c\x80-\x9f]* (?:\x07|\x1b\\|\x9c)?  # 8-bit string sequences (DCS/SOS/OSC/PM/APC)
+    """,
+    re.VERBOSE,
+)
+
+_CONTROL_BYTE_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x80-\x9f]")
+
+_TOOL_SEARCH_MAX_SIZE = 65_536
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences and residual control bytes from *text*."""
+    return _CONTROL_BYTE_RE.sub("", _ANSI_ESCAPE_RE.sub("", text))
+
+
 # Inter-agent message patterns
 # Matches ask_agent: [Question from agent 'X' - please respond...]
 _AGENT_QUESTION_RE = re.compile(
@@ -42,13 +66,15 @@ def extract_tool_search_names(content) -> list[str] | None:
     """
     items = content
     if isinstance(content, str):
+        if len(content) > _TOOL_SEARCH_MAX_SIZE:
+            return None
         if not content.strip().startswith("[{"):
             return None
         try:
             import ast
 
             items = ast.literal_eval(content)
-        except (ValueError, SyntaxError):
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
             return None
     if not isinstance(items, list):
         return None

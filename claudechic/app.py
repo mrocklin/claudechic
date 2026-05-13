@@ -15,6 +15,7 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from claude_agent_sdk.types import HookEvent
     from claudechic.screens.chat import ChatScreen
+    from textual.notifications import SeverityLevel
     from textual.timer import Timer
 
 from textual.app import App
@@ -64,7 +65,7 @@ from claudechic.config import CONFIG, NEW_INSTALL, save as save_config
 from claudechic.enums import AgentStatus, PermissionChoice, ToolName
 from claudechic.mcp import set_app, create_chic_server
 from claudechic.file_index import FileIndex
-from claudechic.formatting import trim_model_name
+from claudechic.formatting import strip_ansi, trim_model_name
 from claudechic.history import append_to_history
 from claudechic.widgets import (
     ContextBar,
@@ -276,6 +277,24 @@ class ChatApp(App):
         # Track pending slash commands passed to Claude (for typo detection)
         # agent_id -> command name (e.g., "/cleanup")
         self._pending_slash_commands: dict[str, str] = {}
+
+    def notify(
+        self,
+        message: str,
+        *,
+        title: str = "",
+        severity: "SeverityLevel" = "information",
+        timeout: float | None = None,
+        markup: bool = False,
+    ) -> None:
+        """Override to default markup=False and strip ANSI from untrusted content."""
+        super().notify(
+            strip_ansi(message),
+            title=strip_ansi(title) if title else title,
+            severity=severity,
+            timeout=timeout,
+            markup=markup,
+        )
 
     def _fatal_error(self) -> None:
         """Override to use plain Python tracebacks instead of rich's fancy ones."""
@@ -693,7 +712,7 @@ class ChatApp(App):
 
     def _handle_sdk_stderr(self, message: str) -> None:
         """Handle SDK stderr output by showing in chat."""
-        message = message.strip()
+        message = strip_ansi(message).strip()
         if not message:
             return
         self._show_system_info(message, "warning", None)
@@ -1310,6 +1329,7 @@ class ChatApp(App):
         self, message: str, severity: str, agent_id: str | None
     ) -> None:
         """Show system info message in chat view (not stored in history)."""
+        message = strip_ansi(message)
         from claudechic.filters import should_filter_message
 
         if should_filter_message(message):

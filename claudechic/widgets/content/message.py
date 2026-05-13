@@ -239,7 +239,7 @@ class ChatAttachment(Button):
             else:
                 subprocess.run(["xdg-open", self._path], check=True)
         except Exception as e:
-            self.app.notify(f"Failed to open: {e}", severity="error")
+            self.app.notify(f"Failed to open: {e}", severity="error", markup=False)
 
 
 class ImageAttachments(Horizontal):
