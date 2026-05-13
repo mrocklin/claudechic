@@ -254,3 +254,11 @@ def test_cleanup_handles_stale_worktree_path(patched_main, tmp_path):
     assert success, msg
     # Stale ref is gone.
     assert "feat-stale" not in _git(repo, "worktree", "list")
+
+
+@pytest.mark.usefixtures("patched_main")
+class TestStartWorktreeInjectionGuard:
+    def test_feature_name_dash_prefix_returns_error(self, repo):
+        ok, msg, _ = start_worktree("--evil", parent_cwd=repo)
+        assert not ok
+        assert "must not start with" in msg.lower() or "invalid" in msg.lower()
