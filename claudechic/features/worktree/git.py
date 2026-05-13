@@ -1,5 +1,6 @@
 """Git worktree management for isolated feature work."""
 
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -7,6 +8,35 @@ from pathlib import Path
 
 from claudechic.config import CONFIG
 from claudechic.errors import log
+
+
+def branch_exists(branch: str, cwd: Path | None = None) -> bool:
+    """Check if a local branch exists. Rejects tags, remote refs, and revspecs."""
+    fmt_check = subprocess.run(
+        ["git", "check-ref-format", "--allow-onelevel", branch],
+        capture_output=True, cwd=cwd,
+    )
+    if fmt_check.returncode != 0:
+        return False
+    result = subprocess.run(
+        ["git", "show-ref", "--verify", f"refs/heads/{branch}"],
+        capture_output=True, cwd=cwd,
+    )
+    return result.returncode == 0
+
+
+def get_local_branches(
+    cwd: Path | None = None, exclude: str | None = None, limit: int = 5
+) -> list[str]:
+    """List local branch names for error message suggestions."""
+    result = subprocess.run(
+        ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if result.returncode != 0:
+        return []
+    branches = [b for b in result.stdout.strip().split("\n") if b and b != exclude]
+    return sorted(branches)[:limit]
 
 
 class FinishPhase(Enum):
@@ -365,6 +395,13 @@ def start_worktree(
 
     Returns (success, message, worktree_path).
     """
+    if base is not None:
+        base_stripped = base.strip()
+        if not base_stripped:
+            return False, "Invalid base branch: must not be empty", None
+        if base_stripped.startswith("-"):
+            return False, "Invalid base branch: must not start with '-'", None
+
     try:
         main_wt = get_main_worktree()
 
@@ -643,7 +680,7 @@ def discard_all_changes(worktree_dir: Path) -> tuple[bool, str]:
     """
     # Reset staged and unstaged changes
     result = subprocess.run(
-        ["git", "checkout", "."], cwd=worktree_dir, capture_output=True, text=True
+        ["git", "checkout", "HEAD", "--", "."], cwd=worktree_dir, capture_output=True, text=True
     )
     if result.returncode != 0:
         return False, f"checkout failed: {result.stderr.strip()}"
@@ -698,6 +735,11 @@ def fast_forward_merge(info: FinishInfo) -> tuple[bool, str]:
 
 def get_finish_prompt(info: FinishInfo) -> str:
     """Generate the prompt for Claude to rebase and merge a feature branch."""
+    branch = shlex.quote(info.branch_name)
+    base = shlex.quote(info.base_branch)
+    main_dir = shlex.quote(str(info.main_dir))
+    # NOTE: Descriptive lines use unquoted names for readability.
+    # Shell command lines use shlex-quoted versions.
     return f"""Rebase and merge this feature branch:
 
 Branch: {info.branch_name}
@@ -707,10 +749,10 @@ Main dir: {info.main_dir}
 
 Steps:
 1. Check for uncommitted changes in the worktree (fail if any)
-2. Rebase {info.branch_name} onto the LOCAL {info.base_branch} branch (do NOT fetch from remote):
-   git rebase {info.base_branch}
-3. In the main dir ({info.main_dir}), merge {info.branch_name}:
-   cd {info.main_dir} && git merge {info.branch_name}
+2. Rebase {branch} onto the LOCAL {base} branch (do NOT fetch from remote):
+   git rebase {base}
+3. In the main dir ({info.main_dir}), merge {branch}:
+   cd {main_dir} && git merge {branch}
 
 Do NOT remove the worktree or delete the branch - the app will handle cleanup.
 Do NOT interact with remotes (no fetch, no pull, no push)."""

@@ -15,8 +15,10 @@ from unittest.mock import patch
 import pytest
 
 from claudechic.features.worktree.git import (
+    branch_exists,
     cleanup_worktrees,
     get_finish_info,
+    get_local_branches,
     get_parent_branch,
     has_uncommitted_changes,
     read_parent_branch,
@@ -254,3 +256,27 @@ def test_cleanup_handles_stale_worktree_path(patched_main, tmp_path):
     assert success, msg
     # Stale ref is gone.
     assert "feat-stale" not in _git(repo, "worktree", "list")
+
+
+class TestBranchExists:
+    def test_existing_branch_returns_true(self, repo):
+        assert branch_exists("main", cwd=repo) is True
+
+    def test_nonexistent_branch_returns_false(self, repo):
+        assert branch_exists("nonexistent-branch-xyz", cwd=repo) is False
+
+    def test_does_not_match_tags(self, repo):
+        subprocess.run(["git", "tag", "v1.0"], cwd=repo, check=True, capture_output=True)
+        assert branch_exists("v1.0", cwd=repo) is False
+
+    def test_rejects_revision_expressions(self, repo):
+        assert branch_exists("HEAD~1", cwd=repo) is False
+        assert branch_exists("main^", cwd=repo) is False
+
+
+@pytest.mark.usefixtures("patched_main")
+class TestStartWorktreeInjectionGuard:
+    def test_dash_prefix_returns_error(self, repo):
+        ok, msg, _ = start_worktree("test-feat", base="--evil", parent_cwd=repo)
+        assert not ok
+        assert "must not start with" in msg.lower() or "invalid" in msg.lower()
