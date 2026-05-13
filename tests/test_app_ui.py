@@ -867,3 +867,12 @@ async def test_stop_review_polling_unconditional(mock_sdk):
         fake_timer.stop.assert_called_once()
         assert app._review_poll_timer is None
         assert app._review_poll_agent_id is None
+
+
+@pytest.mark.asyncio
+async def test_notify_defaults_markup_false(mock_sdk):
+    """notify() should default markup=False and strip ANSI to prevent MarkupError."""
+    app = ChatApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.notify("\x1b[31m[ERROR]\x1b[0m Something failed")
+        await pilot.pause()

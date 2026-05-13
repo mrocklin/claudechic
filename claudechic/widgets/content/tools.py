@@ -18,6 +18,7 @@ from claude_agent_sdk import ToolUseBlock, ToolResultBlock
 
 from claudechic.enums import ToolName
 from claudechic.formatting import (
+    _TOOL_SEARCH_MAX_SIZE,
     extract_tool_search_names,
     format_tool_header,
     format_tool_input,
@@ -51,7 +52,7 @@ def _extract_text_content(content: str | list) -> str:
     if isinstance(content, str):
         # Handle stringified MCP list format (SDK sometimes returns str repr)
         if content.startswith("[{") and "'text':" in content:
-            if len(content) > 65_536:
+            if len(content) > _TOOL_SEARCH_MAX_SIZE:
                 return content
             import ast
 

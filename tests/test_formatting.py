@@ -76,3 +76,10 @@ class TestStripAnsi:
 
     def test_osc8_hyperlink(self):
         assert strip_ansi("\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\") == "link"
+
+
+def test_extract_tool_search_names_rejects_oversized_input():
+    """Inputs > 64KB should return None without attempting ast.literal_eval."""
+    from claudechic.formatting import extract_tool_search_names
+    huge = "[{" + "x" * 70_000 + "}]"
+    assert extract_tool_search_names(huge) is None
