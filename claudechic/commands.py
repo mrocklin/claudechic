@@ -9,6 +9,7 @@ It's used by autocomplete (app.py) and help (help_data.py).
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import time
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from claudechic.analytics import capture
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from claudechic.app import ChatApp
@@ -105,6 +108,7 @@ COMMANDS: list[tuple[str, str, list[str]]] = [
     ("/welcome", "Show welcome message", []),
     ("/reviewer", "Spawn a review agent for current changes", []),
     ("/rewind", "Rewind to a previous checkpoint", []),
+    ("/session-id", "Show and copy session ID", []),
     ("/help", "Show help", []),
     ("/exit", "Quit", []),
     ("!<cmd>", "Shell command alias", []),
@@ -248,6 +252,10 @@ def handle_command(app: "ChatApp", prompt: str) -> bool:
                 app._set_agent_effort(effort)
         return True
 
+    if cmd == "/session-id":
+        _track_command(app, "session-id")
+        return _handle_session_id(app)
+
     if cmd == "/exit":
         _track_command(app, "exit")
         app.exit()
@@ -379,6 +387,26 @@ SDK_PASSTHROUGH_COMMANDS = frozenset(
         "/ultrareview",  # Cloud-based parallel multi-agent review (Claude Code 2.1.111+)
     }
 )
+
+
+def _handle_session_id(app: "ChatApp") -> bool:
+    agent = app._agent
+    session_id = agent.session_id if agent else None
+    agent_id = agent.id if agent else None
+    if not session_id:
+        app._show_system_info("No active session", "info", agent_id)
+        return True
+    agent_name = agent.name if agent else "unknown"
+    msg = f"Session ID ({agent_name}): {session_id}"
+    app._show_system_info(msg, "info", agent_id)
+    try:
+        if app._try_copy(session_id):
+            app.notify("Session ID copied to clipboard")
+        else:
+            log.debug("Clipboard copy failed for session ID")
+    except Exception:
+        log.debug("Clipboard copy failed for session ID", exc_info=True)
+    return True
 
 
 def _handle_resume(app: "ChatApp", command: str) -> bool:

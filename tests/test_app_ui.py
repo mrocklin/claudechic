@@ -903,3 +903,27 @@ async def test_try_copy_returns_false_when_no_tools(mock_sdk):
              patch("sys.platform", "linux"):
             result = app._try_copy("test")
             assert result is False
+
+
+# =============================================================================
+# /session-id command (P6)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_session_id_command_shows_id(mock_sdk):
+    from claudechic.commands import handle_command
+
+    app = ChatApp()
+    async with app.run_test(size=(120, 40)):
+        agent = app._agent
+        if not agent:
+            pytest.skip("No agent available")
+        agent.session_id = "abc-123-def"
+        with patch.object(app, "_show_system_info") as mock_info, \
+             patch.object(app, "_try_copy", return_value=True) as mock_copy:
+            handle_command(app, "/session-id")
+            mock_info.assert_called_once()
+            call_args = mock_info.call_args[0]
+            assert "abc-123-def" in call_args[0]
+            mock_copy.assert_called_once_with("abc-123-def")
