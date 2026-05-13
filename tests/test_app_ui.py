@@ -1,6 +1,6 @@
 """App-level UI tests without SDK dependency."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -867,3 +867,45 @@ async def test_stop_review_polling_unconditional(mock_sdk):
         fake_timer.stop.assert_called_once()
         assert app._review_poll_timer is None
         assert app._review_poll_agent_id is None
+
+
+@pytest.mark.asyncio
+async def test_model_switch_preserves_session(mock_sdk):
+    """Switching model should pass resume=session_id to preserve conversation."""
+    app = ChatApp()
+    async with app.run_test(size=(120, 40)):
+        agent = app._agent
+        if not agent:
+            pytest.skip("No agent available")
+        agent.session_id = "test-session-123"
+        with patch.object(app, "_make_options") as mock_opts, \
+             patch.object(agent, "disconnect", new_callable=AsyncMock), \
+             patch.object(agent, "connect", new_callable=AsyncMock):
+            mock_opts.return_value = MagicMock()
+            app._set_agent_model("opus")
+            await wait_for_workers(app)
+            mock_opts.assert_called_once()
+            _, kwargs = mock_opts.call_args
+            assert kwargs["resume"] == "test-session-123"
+
+
+@pytest.mark.asyncio
+async def test_effort_default_maps_to_none(mock_sdk):
+    """effort='default' should pass effort=None to _make_options (SDK auto)."""
+    app = ChatApp()
+    async with app.run_test(size=(120, 40)):
+        agent = app._agent
+        if not agent:
+            pytest.skip("No agent available")
+        agent.session_id = "test-session-456"
+        agent.effort = "high"
+        with patch.object(app, "_make_options") as mock_opts, \
+             patch.object(agent, "disconnect", new_callable=AsyncMock), \
+             patch.object(agent, "connect", new_callable=AsyncMock):
+            mock_opts.return_value = MagicMock()
+            app._set_agent_effort("default")
+            await wait_for_workers(app)
+            mock_opts.assert_called_once()
+            _, kwargs = mock_opts.call_args
+            assert kwargs["effort"] is None, "default should map to None"
+            assert kwargs["resume"] == "test-session-456"

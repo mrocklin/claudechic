@@ -2157,12 +2157,14 @@ class ChatApp(App):
         self._update_footer_model(model)
         if agent.client:
             self.notify(f"Switching to {model}...")
+            session_id = agent.session_id
             await agent.disconnect()
             options = self._make_options(
                 cwd=agent.cwd,
                 agent_name=agent.name,
                 model=model,
                 effort=agent.effort,
+                resume=session_id,
             )
             await agent.connect(options)
 
@@ -2199,11 +2201,12 @@ class ChatApp(App):
         if not agent:
             self.notify("No active agent", severity="warning")
             return
-        if effort == agent.effort:
+        effective = None if effort == "default" else effort
+        if effective == agent.effort:
             return
         old_effort = agent.effort or "default"
-        agent.effort = effort
-        self.status_footer.effort = effort or ""
+        agent.effort = effective
+        self.status_footer.effort = effective or ""
         self.run_worker(
             capture(
                 "effort_changed",
@@ -2213,13 +2216,16 @@ class ChatApp(App):
             )
         )
         if agent.client:
-            self.notify(f"Switching effort to {effort}...")
+            label = effort if effort != "default" else "auto"
+            self.notify(f"Switching effort to {label}...")
+            session_id = agent.session_id
             await agent.disconnect()
             options = self._make_options(
                 cwd=agent.cwd,
                 agent_name=agent.name,
                 model=agent.model,
-                effort=effort,
+                effort=agent.effort,
+                resume=session_id,
             )
             await agent.connect(options)
 
