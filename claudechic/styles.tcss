@@ -134,6 +134,10 @@ ErrorMessage {
     margin: 1 0 1 0;
 }
 
+ErrorMessage:hover {
+    background: $error 20%;
+}
+
 /* System info messages - muted, informational */
 SystemInfo {
     border-left: thick $panel;
