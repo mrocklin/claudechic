@@ -276,6 +276,10 @@ class ChatApp(App):
         # Track pending slash commands passed to Claude (for typo detection)
         # agent_id -> command name (e.g., "/cleanup")
         self._pending_slash_commands: dict[str, str] = {}
+        # Clipboard robustness
+        self._osc52_cached: bool | None = None
+        self._copy_timer: Timer | None = None
+        self._copy_failed_notified: bool = False
 
     def _fatal_error(self) -> None:
         """Override to use plain Python tracebacks instead of rich's fancy ones."""
@@ -1547,11 +1551,80 @@ class ChatApp(App):
         if chat_view:
             chat_view.clear()
 
+    def _safe_get_selected_text(self) -> str | None:
+        """Get selected text, returning None on stale selection coordinates."""
+        try:
+            return self.screen.get_selected_text()
+        except IndexError:
+            return None
+
+    def _osc52_likely_works(self) -> bool:
+        """Check whether OSC 52 clipboard can reach the terminal. Cached."""
+        if self._osc52_cached is not None:
+            return self._osc52_cached
+        import os
+        import subprocess
+
+        if not os.environ.get("TMUX"):
+            self._osc52_cached = True
+            return True
+        try:
+            result = subprocess.run(
+                ["tmux", "show", "-gv", "set-clipboard"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            self._osc52_cached = result.stdout.strip().lower() != "off"
+        except Exception:
+            self._osc52_cached = True
+        return self._osc52_cached
+
+    def _try_copy(self, text: str) -> bool:
+        """Copy text to clipboard, returning True if we believe it succeeded."""
+        import shutil
+        import subprocess
+
+        self.copy_to_clipboard(text)  # OSC 52 + upstream PRIMARY override
+        if not sys.platform.startswith("linux"):
+            return True
+        for cmd in (
+            ["xclip", "-selection", "clipboard"],
+            ["xsel", "--clipboard", "--input"],
+        ):
+            if shutil.which(cmd[0]):
+                try:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    proc.stdin.write(text.encode())  # type: ignore[union-attr]
+                    proc.stdin.close()  # type: ignore[union-attr]
+                    proc.wait(timeout=2)
+                    if proc.returncode == 0:
+                        return True
+                    continue  # non-zero exit (e.g., no DISPLAY), try next tool
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                    continue
+                except Exception:
+                    continue
+        return self._osc52_likely_works()
+
     def action_copy_selection(self) -> None:
-        selected = self.screen.get_selected_text()
+        selected = self._safe_get_selected_text()
         if selected:
-            self.copy_to_clipboard(selected)
-            self.notify("Copied to clipboard")
+            if self._try_copy(selected):
+                self._copy_failed_notified = False  # reset on success
+                self.notify("Copied to clipboard")
+            elif not self._copy_failed_notified:
+                self._copy_failed_notified = True
+                self.notify(
+                    "Copy failed — clipboard tool not found", severity="warning"
+                )
 
     def action_new_agent(self) -> None:
         """Create a new agent (prompts for name/path)."""
@@ -1635,10 +1708,20 @@ class ChatApp(App):
                 return
 
     def _check_and_copy_selection(self) -> None:
-        selected = self.screen.get_selected_text()
+        selected = self._safe_get_selected_text()
         if selected and len(selected.strip()) > 0:
-            self.copy_to_clipboard(selected)
-            self.notify("Copied", timeout=1)
+            if self._try_copy(selected):
+                self._copy_failed_notified = False  # reset on success
+                if self._copy_timer is not None:
+                    self._copy_timer.stop()
+                self._copy_timer = self.set_timer(
+                    0.5, lambda: self.notify("Copied", timeout=1)
+                )
+            elif not self._copy_failed_notified:
+                self._copy_failed_notified = True
+                self.notify(
+                    "Copy failed — clipboard tool not found", severity="warning"
+                )
 
     def action_quit(self) -> None:  # type: ignore[override]
         # If history search is visible, cancel it

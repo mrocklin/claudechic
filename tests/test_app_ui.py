@@ -1,6 +1,6 @@
 """App-level UI tests without SDK dependency."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -867,3 +867,39 @@ async def test_stop_review_polling_unconditional(mock_sdk):
         fake_timer.stop.assert_called_once()
         assert app._review_poll_timer is None
         assert app._review_poll_agent_id is None
+
+
+# =============================================================================
+# Clipboard robustness (P2)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_safe_get_selected_text_handles_index_error(mock_sdk):
+    """_safe_get_selected_text should return None on IndexError, not crash."""
+    app = ChatApp()
+    async with app.run_test(size=(120, 40)):
+        with patch.object(app.screen, "get_selected_text", side_effect=IndexError("stale")):
+            result = app._safe_get_selected_text()
+            assert result is None
+
+
+@pytest.mark.asyncio
+async def test_try_copy_returns_bool(mock_sdk):
+    """_try_copy should return True on success."""
+    app = ChatApp()
+    async with app.run_test(size=(120, 40)):
+        result = app._try_copy("test")
+        assert isinstance(result, bool)
+
+
+@pytest.mark.asyncio
+async def test_try_copy_returns_false_when_no_tools(mock_sdk):
+    """_try_copy should return False when no clipboard tools and OSC 52 off."""
+    app = ChatApp()
+    async with app.run_test(size=(120, 40)):
+        with patch("shutil.which", return_value=None), \
+             patch.object(app, "_osc52_likely_works", return_value=False), \
+             patch("sys.platform", "linux"):
+            result = app._try_copy("test")
+            assert result is False
