@@ -228,9 +228,11 @@ class ChatApp(App):
         remote_port: int = 0,
         skip_permissions: bool = False,
         theme_override: str | None = None,
+        width: int | None = None,
     ) -> None:
         super().__init__()
         self.scroll_sensitivity_y = 1.0  # Smoother scrolling (default is 2.0)
+        self._width = width
         # AgentManager is the single source of truth for agents
         self.agent_mgr: AgentManager | None = None
 
@@ -859,6 +861,11 @@ class ChatApp(App):
 
         # Focus input immediately - UI is ready
         self.chat_input.focus()
+
+        # Apply --width CLI override to chat column max-width
+        if self._width is not None:
+            if chat_column := self.query_one_optional("#chat-column"):
+                chat_column.styles.max_width = self._width
 
         # Initialize vi mode if enabled in config
         if CONFIG.get("vi-mode"):
