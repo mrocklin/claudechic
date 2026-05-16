@@ -34,6 +34,17 @@ async def test_app_mounts_basic_widgets(mock_sdk):
 
 
 @pytest.mark.asyncio
+async def test_width_cli_arg_applied(mock_sdk):
+    """--width sets max_width on the chat column."""
+    app = ChatApp(width=160)
+    async with app.run_test():
+        chat_column = app.query_one("#chat-column")
+        max_width = chat_column.styles.max_width
+        assert max_width is not None
+        assert max_width.value == 160
+
+
+@pytest.mark.asyncio
 async def test_permission_mode_cycle(mock_sdk):
     """Shift+Tab cycles permission mode: default -> acceptEdits -> plan -> auto -> default."""
     app = ChatApp()

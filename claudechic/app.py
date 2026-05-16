@@ -862,13 +862,10 @@ class ChatApp(App):
         # Focus input immediately - UI is ready
         self.chat_input.focus()
 
-        # Apply --width CLI override
+        # Apply --width CLI override to chat column max-width
         if self._width is not None:
-            try:
-                chat_column = self.query_one("#chat-column")
+            if chat_column := self.query_one_optional("#chat-column"):
                 chat_column.styles.max_width = self._width
-            except Exception:
-                pass
 
         # Initialize vi mode if enabled in config
         if CONFIG.get("vi-mode"):

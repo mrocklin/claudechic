@@ -62,7 +62,7 @@ def main():
         "-w",
         type=positive_int,
         default=None,
-        help="Set terminal width for chat column",
+        help="Max width (in cells) for the chat column (default: 100)",
     )
     parser.add_argument("prompt", nargs="*", help="Initial prompt to send")
     args = parser.parse_args()
