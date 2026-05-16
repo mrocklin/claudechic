@@ -1084,14 +1084,13 @@ class ChatApp(App):
         self._review_poll_agent_id = None
 
     async def _load_and_display_history(
-        self, session_id: str, cwd: Path | None = None, agent: Agent | None = None
+        self, session_id: str, cwd: Path | None = None
     ) -> None:
         """Load session history into agent and render in chat view.
 
         This uses Agent.messages as the single source of truth.
         """
-        if agent is None:
-            agent = self._agent
+        agent = self._agent
         if not agent:
             return
 
