@@ -1,5 +1,6 @@
 """Git worktree management for isolated feature work."""
 
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -365,8 +366,19 @@ def start_worktree(
 
     Returns (success, message, worktree_path).
     """
-    if feature_name.startswith("-"):
+    # Reject dash-prefixed values that would be parsed as git flags. Also
+    # reject empty strings — both fields go straight into a git command line.
+    feature_stripped = feature_name.strip()
+    if not feature_stripped:
+        return False, "Invalid feature name: must not be empty", None
+    if feature_stripped.startswith("-"):
         return False, "Invalid feature name: must not start with '-'", None
+    if base is not None:
+        base_stripped = base.strip()
+        if not base_stripped:
+            return False, "Invalid base branch: must not be empty", None
+        if base_stripped.startswith("-"):
+            return False, "Invalid base branch: must not start with '-'", None
 
     try:
         main_wt = get_main_worktree()
@@ -644,14 +656,19 @@ def discard_all_changes(worktree_dir: Path) -> tuple[bool, str]:
 
     Returns (success, error).
     """
-    # Reset staged and unstaged changes
+    # `reset --hard HEAD` clobbers both the index and the working tree in a
+    # single shot — staged and unstaged changes both go. `git checkout .`
+    # only restores unstaged tracked files, so a staged change would survive.
     result = subprocess.run(
-        ["git", "checkout", "."], cwd=worktree_dir, capture_output=True, text=True
+        ["git", "reset", "--hard", "HEAD"],
+        cwd=worktree_dir,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
-        return False, f"checkout failed: {result.stderr.strip()}"
+        return False, f"reset failed: {result.stderr.strip()}"
 
-    # Remove all untracked files
+    # `reset --hard` doesn't touch untracked files; clean them separately.
     result = subprocess.run(
         ["git", "clean", "-fd"], cwd=worktree_dir, capture_output=True, text=True
     )
@@ -700,20 +717,28 @@ def fast_forward_merge(info: FinishInfo) -> tuple[bool, str]:
 
 
 def get_finish_prompt(info: FinishInfo) -> str:
-    """Generate the prompt for Claude to rebase and merge a feature branch."""
+    """Generate the prompt for Claude to rebase and merge a feature branch.
+
+    All interpolated values are shlex-quoted (including descriptive lines)
+    so a hostile branch name can't inject shell commands.
+    """
+    branch = shlex.quote(info.branch_name)
+    base = shlex.quote(info.base_branch)
+    worktree_dir = shlex.quote(str(info.worktree_dir))
+    main_dir = shlex.quote(str(info.main_dir))
     return f"""Rebase and merge this feature branch:
 
-Branch: {info.branch_name}
-Base branch: {info.base_branch}
-Worktree dir: {info.worktree_dir}
-Main dir: {info.main_dir}
+Branch: {branch}
+Base branch: {base}
+Worktree dir: {worktree_dir}
+Main dir: {main_dir}
 
 Steps:
 1. Check for uncommitted changes in the worktree (fail if any)
-2. Rebase {info.branch_name} onto the LOCAL {info.base_branch} branch (do NOT fetch from remote):
-   git rebase {info.base_branch}
-3. In the main dir ({info.main_dir}), merge {info.branch_name}:
-   cd {info.main_dir} && git merge {info.branch_name}
+2. Rebase {branch} onto the LOCAL {base} branch (do NOT fetch from remote):
+   git rebase {base}
+3. In the main dir ({main_dir}), merge {branch}:
+   cd {main_dir} && git merge {branch}
 
 Do NOT remove the worktree or delete the branch - the app will handle cleanup.
 Do NOT interact with remotes (no fetch, no pull, no push)."""

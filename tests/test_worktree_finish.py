@@ -8,6 +8,7 @@ sibling worktree. The fix records the parent at creation time.
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -15,8 +16,11 @@ from unittest.mock import patch
 import pytest
 
 from claudechic.features.worktree.git import (
+    FinishInfo,
     cleanup_worktrees,
+    discard_all_changes,
     get_finish_info,
+    get_finish_prompt,
     get_parent_branch,
     has_uncommitted_changes,
     read_parent_branch,
@@ -223,6 +227,99 @@ def test_get_finish_info_ignores_stale_record_when_parent_worktree_gone(
     # silently became `repo`, and the merge would land on main.
     assert info.base_branch == "main"
     assert info.main_dir == repo
+
+
+# --- discard_all_changes ---
+# Must clobber both staged AND unstaged changes plus untracked files.
+# The earlier `git checkout .` only restored unstaged tracked files, so a
+# staged change survived. `repo` fixture provides committed file `a`.
+
+
+def test_discard_reverts_unstaged_modification(repo):
+    (repo / "a").write_text("dirty")
+    ok, err = discard_all_changes(repo)
+    assert ok, err
+    assert (repo / "a").read_text() == "a"
+    assert _git(repo, "status", "--porcelain") == ""
+
+
+def test_discard_drops_staged_new_file(repo):
+    # The bug: `git checkout .` leaves this in the index.
+    (repo / "staged.txt").write_text("new")
+    _git(repo, "add", "staged.txt")
+    assert _git(repo, "status", "--porcelain") == "A  staged.txt"
+
+    ok, err = discard_all_changes(repo)
+    assert ok, err
+    assert not (repo / "staged.txt").exists()
+    assert _git(repo, "status", "--porcelain") == ""
+
+
+def test_discard_clears_mixed_staged_unstaged_and_untracked(repo):
+    (repo / "a").write_text("dirty")  # unstaged modification
+    (repo / "staged.txt").write_text("new")
+    _git(repo, "add", "staged.txt")  # staged new file
+    (repo / "untracked.txt").write_text("u")  # untracked
+
+    ok, err = discard_all_changes(repo)
+    assert ok, err
+    assert (repo / "a").read_text() == "a"
+    assert not (repo / "staged.txt").exists()
+    assert not (repo / "untracked.txt").exists()
+    assert _git(repo, "status", "--porcelain") == ""
+
+
+# --- get_finish_prompt injection guard ---
+# Every interpolated value must round-trip through `shlex.split` as a single
+# token. Otherwise a hostile branch name injects when Claude pastes the
+# rebase/merge command into a shell.
+
+HOSTILE_STRINGS = [
+    "; rm -rf $HOME",
+    "$(touch /tmp/pwned)",
+    "`id`",
+    "a && echo bad",
+    "a' '; echo bad",
+    "branch with spaces",
+]
+
+
+@pytest.mark.parametrize("hostile", HOSTILE_STRINGS)
+@pytest.mark.parametrize("field", ["branch_name", "base_branch", "main_dir"])
+def test_finish_prompt_injection_stays_single_token(tmp_path, field, hostile):
+    kwargs: dict = {
+        "branch_name": "feat",
+        "base_branch": "main",
+        "worktree_dir": tmp_path / "wt",
+        "main_dir": tmp_path / "main",
+    }
+    kwargs[field] = Path(hostile) if field.endswith("_dir") else hostile
+    info = FinishInfo(**kwargs)
+    tokens = shlex.split(get_finish_prompt(info))
+    # `&&` and other template metacharacters legitimately appear; we only
+    # care that the injected value survives as one token.
+    assert hostile in tokens, f"{hostile!r} not preserved; tokens={tokens!r}"
+
+
+# --- start_worktree input validation ---
+# Both `feature_name` and `base` flow straight onto a `git worktree add`
+# command line. Empty or dash-prefixed values must be rejected.
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        ({"feature_name": "--evil"}, "must not start with"),
+        ({"feature_name": "safe", "base": "--evil"}, "must not start with"),
+        ({"feature_name": "   "}, "must not be empty"),
+        ({"feature_name": "safe", "base": "   "}, "must not be empty"),
+    ],
+)
+def test_start_worktree_rejects_bad_input(patched_main, kwargs, expected):
+    ok, msg, path = start_worktree(parent_cwd=patched_main, **kwargs)
+    assert not ok
+    assert path is None
+    assert expected in msg
 
 
 def test_cleanup_handles_stale_worktree_path(patched_main, tmp_path):
