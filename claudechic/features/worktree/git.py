@@ -365,6 +365,9 @@ def start_worktree(
 
     Returns (success, message, worktree_path).
     """
+    if feature_name.startswith("-"):
+        return False, "Invalid feature name: must not start with '-'", None
+
     try:
         main_wt = get_main_worktree()
 
