@@ -15,6 +15,7 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from claude_agent_sdk.types import HookEvent
     from claudechic.screens.chat import ChatScreen
+    from textual.notifications import SeverityLevel
     from textual.timer import Timer
 
 from textual.app import App
@@ -64,7 +65,7 @@ from claudechic.config import CONFIG, NEW_INSTALL, save as save_config
 from claudechic.enums import AgentStatus, PermissionChoice, ToolName
 from claudechic.mcp import set_app, create_chic_server
 from claudechic.file_index import FileIndex
-from claudechic.formatting import trim_model_name
+from claudechic.formatting import strip_ansi, trim_model_name
 from claudechic.history import append_to_history
 from claudechic.widgets import (
     ContextBar,
@@ -287,6 +288,29 @@ class ChatApp(App):
         # Store plain text traceback for display after exit
         self._exit_renderables.append(traceback.format_exc())
         self._close_messages_no_wait()
+
+    def notify(
+        self,
+        message: str,
+        *,
+        title: str = "",
+        severity: SeverityLevel = "information",
+        timeout: float | None = None,
+        markup: bool = False,
+    ) -> None:
+        """Default ``markup=False`` to avoid MarkupError on bracketed text.
+
+        Textual's default parses Rich markup, which crashes on ``[ERROR]``
+        or unclosed tags from SDK output. Pass ``markup=True`` explicitly
+        when needed (no current call site does).
+        """
+        super().notify(
+            message,
+            title=title,
+            severity=severity,
+            timeout=timeout,
+            markup=markup,
+        )
 
     # Properties to access active agent's state
     @property
@@ -1317,6 +1341,9 @@ class ChatApp(App):
         self, message: str, severity: str, agent_id: str | None
     ) -> None:
         """Show system info message in chat view (not stored in history)."""
+        # Chokepoint for SDK stderr / MCP errors — strip terminal color codes
+        # so Markdown rendering doesn't show literal ←[31m garbage.
+        message = strip_ansi(message)
         from claudechic.filters import should_filter_message
 
         if should_filter_message(message):

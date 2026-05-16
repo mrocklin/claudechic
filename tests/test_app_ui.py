@@ -878,3 +878,47 @@ async def test_stop_review_polling_unconditional(mock_sdk):
         fake_timer.stop.assert_called_once()
         assert app._review_poll_timer is None
         assert app._review_poll_agent_id is None
+
+
+# =============================================================================
+# notify() markup safety
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_notify_does_not_crash_on_brackets_or_ansi(mock_sdk):
+    """notify() is a pass-through: no markup parsing, no ANSI handling.
+
+    With Textual's default ``markup=True``, ``[/closed]`` raises
+    MarkupError. Our override flips the default. We also don't strip
+    ANSI in notify itself (it's safe at the toast layer) — verify the
+    toast accepts raw escapes without crashing.
+    """
+    app = ChatApp()
+    async with app.run_test() as pilot:
+        app.notify("[ERROR] something went wrong [/closed]")
+        app.notify("\x1b[31mError:\x1b[0m connection refused", severity="error")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_sdk_stderr_strips_ansi(mock_sdk):
+    """SDK stderr containing ANSI color codes renders cleanly in chat.
+
+    Without stripping, Textual's Markdown widget displays literal
+    ``←[31m`` characters. Stripped at the _show_system_info chokepoint.
+    """
+    from claudechic.widgets import SystemInfo
+
+    app = ChatApp()
+    async with app.run_test() as pilot:
+        chat_view = app._chat_view
+        assert chat_view is not None
+
+        app._handle_sdk_stderr("\x1b[31mError:\x1b[0m connection refused")
+        await pilot.pause()
+
+        info_widgets = list(chat_view.query(SystemInfo))
+        assert len(info_widgets) == 1
+        assert info_widgets[0]._message == "Error: connection refused"
+        assert "\x1b" not in info_widgets[0]._message

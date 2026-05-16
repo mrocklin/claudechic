@@ -17,6 +17,28 @@ from claudechic.enums import ToolName
 DEFAULT_CONTEXT_WINDOW = 200_000
 MAX_HEADER_WIDTH = 70  # Max width for tool headers
 
+# Cap on stringified-list parsing via ast.literal_eval. Tool results from
+# misbehaving MCP servers can be huge, and ast.literal_eval builds a parse
+# tree proportional to input size — a multi-MB payload would freeze the UI.
+# 64KB is generous for the actual use case (lists of tool/text descriptors).
+LITERAL_EVAL_MAX_SIZE = 65_536
+
+
+# ANSI CSI escapes — color codes (\x1b[31m), cursor moves (\x1b[2J),
+# bracketed-paste markers (\x1b[?2004h). Deliberately narrow: OSC/DCS and
+# C1-byte stripping are rare in CLI output and risk corrupting Unicode.
+_ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def strip_ansi(text: str) -> str:
+    """Strip ANSI CSI/SGR escape sequences from *text*.
+
+    Used at the chat-display boundary so Markdown rendering doesn't show
+    literal ``←[31m`` garbage when SDK stderr or tool output contains
+    terminal color codes.
+    """
+    return _ANSI_CSI_RE.sub("", text)
+
 
 # Inter-agent message patterns
 # Matches ask_agent: [Question from agent 'X' - please respond...]
@@ -42,13 +64,15 @@ def extract_tool_search_names(content) -> list[str] | None:
     """
     items = content
     if isinstance(content, str):
+        if len(content) > LITERAL_EVAL_MAX_SIZE:
+            return None
         if not content.strip().startswith("[{"):
             return None
         try:
             import ast
 
             items = ast.literal_eval(content)
-        except (ValueError, SyntaxError):
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
             return None
     if not isinstance(items, list):
         return None
