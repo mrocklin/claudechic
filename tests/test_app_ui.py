@@ -1,6 +1,6 @@
 """App-level UI tests without SDK dependency."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -922,3 +922,139 @@ async def test_sdk_stderr_strips_ansi(mock_sdk):
         assert len(info_widgets) == 1
         assert info_widgets[0]._message == "Error: connection refused"
         assert "\x1b" not in info_widgets[0]._message
+
+
+# ---------------------------------------------------------------------------
+# Session preservation across model/effort switches (regression: see PR #71)
+#
+# Switching model/effort tears down the SDK client and reconnects. Without
+# resume=, the SDK starts a fresh session and conversation history is lost.
+# All reconnect paths funnel through `_reconnect_agent`, so we test:
+#   1. `_reconnect_agent` itself plumbs resume= to both _make_options and
+#      agent.connect (the canonical pattern).
+#   2. The model/effort callers hand it the current session_id.
+#   3. "default" effort is normalised to None (SDK auto).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconnect_agent_passes_resume_to_both(mock_sdk):
+    """_reconnect_agent must pass resume= to BOTH _make_options and connect.
+
+    Passing only to _make_options leaves agent.session_id stale until the
+    next SystemMessage.init arrives. Passing to connect() anchors it
+    synchronously. Both reconnect callers depend on this.
+    """
+    app = ChatApp()
+    async with app.run_test():
+        agent = app._agent
+        assert agent is not None
+        with (
+            patch.object(app, "_make_options") as mock_opts,
+            patch.object(agent, "disconnect", new_callable=AsyncMock),
+            patch.object(agent, "connect", new_callable=AsyncMock) as mock_connect,
+        ):
+            await app._reconnect_agent(agent, "sess-abc")
+
+        assert mock_opts.call_args.kwargs["resume"] == "sess-abc"
+        assert mock_connect.call_args.kwargs["resume"] == "sess-abc"
+
+
+@pytest.mark.asyncio
+async def test_reconnect_agent_accepts_none(mock_sdk):
+    """session_id=None is a clean no-op resume (fresh session)."""
+    app = ChatApp()
+    async with app.run_test():
+        agent = app._agent
+        assert agent is not None
+        with (
+            patch.object(app, "_make_options") as mock_opts,
+            patch.object(agent, "disconnect", new_callable=AsyncMock),
+            patch.object(agent, "connect", new_callable=AsyncMock) as mock_connect,
+        ):
+            await app._reconnect_agent(agent, None)
+
+        assert mock_opts.call_args.kwargs["resume"] is None
+        assert mock_connect.call_args.kwargs["resume"] is None
+
+
+@pytest.mark.asyncio
+async def test_model_switch_resumes_session(mock_sdk):
+    """Switching model funnels through _reconnect_agent with current session_id."""
+    app = ChatApp()
+    async with app.run_test():
+        agent = app._agent
+        assert agent is not None
+        agent.session_id = "sess-123"
+        agent.model = "sonnet"
+        agent.client = MagicMock()  # take the reconnect branch
+
+        with patch.object(
+            app, "_reconnect_agent", new_callable=AsyncMock
+        ) as mock_reconnect:
+            app._set_agent_model("opus")
+            await wait_for_workers(app)
+
+        mock_reconnect.assert_awaited_once_with(agent, "sess-123")
+        assert agent.model == "opus"
+
+
+@pytest.mark.asyncio
+async def test_effort_switch_resumes_session(mock_sdk):
+    """Switching effort funnels through _reconnect_agent with current session_id."""
+    app = ChatApp()
+    async with app.run_test():
+        agent = app._agent
+        assert agent is not None
+        agent.session_id = "sess-789"
+        agent.effort = "medium"
+        agent.client = MagicMock()
+
+        with patch.object(
+            app, "_reconnect_agent", new_callable=AsyncMock
+        ) as mock_reconnect:
+            app._set_agent_effort("high")
+            await wait_for_workers(app)
+
+        mock_reconnect.assert_awaited_once_with(agent, "sess-789")
+        assert agent.effort == "high"
+
+
+@pytest.mark.asyncio
+async def test_effort_default_maps_to_none(mock_sdk):
+    """effort='default' is the UI label for SDK-auto, i.e. effort=None.
+
+    Verified by checking agent state (normalised) — the reconnect itself
+    is covered by test_effort_switch_resumes_session.
+    """
+    app = ChatApp()
+    async with app.run_test():
+        agent = app._agent
+        assert agent is not None
+        agent.effort = "high"
+        agent.client = MagicMock()
+
+        with patch.object(app, "_reconnect_agent", new_callable=AsyncMock):
+            app._set_agent_effort("default")
+            await wait_for_workers(app)
+
+        assert agent.effort is None
+
+
+@pytest.mark.asyncio
+async def test_effort_default_is_noop_when_already_none(mock_sdk):
+    """`/effort default` when already None must not reconnect."""
+    app = ChatApp()
+    async with app.run_test():
+        agent = app._agent
+        assert agent is not None
+        agent.effort = None
+        agent.client = MagicMock()
+
+        with patch.object(
+            app, "_reconnect_agent", new_callable=AsyncMock
+        ) as mock_reconnect:
+            app._set_agent_effort("default")
+            await wait_for_workers(app)
+
+        mock_reconnect.assert_not_called()

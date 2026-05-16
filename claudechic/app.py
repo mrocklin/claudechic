@@ -2135,8 +2135,12 @@ class ChatApp(App):
             return
         self._do_close_agent(event.agent_id)
 
-    async def _reconnect_agent(self, agent: "Agent", session_id: str) -> None:
-        """Disconnect and reconnect an agent to reload its session."""
+    async def _reconnect_agent(self, agent: "Agent", session_id: str | None) -> None:
+        """Disconnect and reconnect an agent, resuming `session_id` if given.
+
+        `session_id=None` is a clean no-op resume (fresh session) — useful
+        when reconnecting before the first turn has assigned an id.
+        """
         await agent.disconnect()
         options = self._make_options(
             cwd=agent.cwd,
@@ -2204,14 +2208,8 @@ class ChatApp(App):
         self._update_footer_model(model)
         if agent.client:
             self.notify(f"Switching to {model}...")
-            await agent.disconnect()
-            options = self._make_options(
-                cwd=agent.cwd,
-                agent_name=agent.name,
-                model=model,
-                effort=agent.effort,
-            )
-            await agent.connect(options)
+            # Resume the existing session so history isn't lost on reconnect.
+            await self._reconnect_agent(agent, agent.session_id)
 
     @work(group="model_prompt", exclusive=True, exit_on_error=False)
     async def _handle_model_prompt(self) -> None:
@@ -2246,29 +2244,27 @@ class ChatApp(App):
         if not agent:
             self.notify("No active agent", severity="warning")
             return
-        if effort == agent.effort:
+        # "default" is the UI label for "let the SDK pick"; internally we
+        # represent that as None so it matches the SDK's auto behavior.
+        effective = None if effort == "default" else effort
+        if effective == agent.effort:
             return
         old_effort = agent.effort or "default"
-        agent.effort = effort
-        self.status_footer.effort = effort or ""
+        agent.effort = effective
+        self.status_footer.effort = effective or ""
         self.run_worker(
             capture(
                 "effort_changed",
                 from_effort=old_effort,
-                to_effort=effort,
+                to_effort=effective or "default",
                 agent_id=agent.analytics_id,
             )
         )
         if agent.client:
-            self.notify(f"Switching effort to {effort}...")
-            await agent.disconnect()
-            options = self._make_options(
-                cwd=agent.cwd,
-                agent_name=agent.name,
-                model=agent.model,
-                effort=effort,
-            )
-            await agent.connect(options)
+            label = effective or "auto"
+            self.notify(f"Switching effort to {label}...")
+            # Resume the existing session so history isn't lost on reconnect.
+            await self._reconnect_agent(agent, agent.session_id)
 
     @work(group="effort_prompt", exclusive=True, exit_on_error=False)
     async def _handle_effort_prompt(self) -> None:

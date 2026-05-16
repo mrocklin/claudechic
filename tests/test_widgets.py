@@ -244,10 +244,10 @@ async def test_effort_prompt_selection():
     app = WidgetTestApp(lambda: EffortPrompt(current_value="medium"))
     async with app.run_test() as pilot:
         prompt = app.query_one(EffortPrompt)
-        # medium is index 1
-        assert prompt.selected_idx == 1
-        # Navigate to high (index 2) and select via number key
-        await pilot.press("3")
+        # OPTIONS = (default, low, medium, high, xhigh, max); medium is index 2
+        assert prompt.selected_idx == 2
+        # Navigate to high (index 3) and select via number key (1-indexed)
+        await pilot.press("4")
         result = await prompt.wait()
     assert result == "high"
 
@@ -262,8 +262,8 @@ async def test_effort_prompt_xhigh_initial():
     app = WidgetTestApp(lambda: EffortPrompt(current_value="xhigh"))
     async with app.run_test():
         prompt = app.query_one(EffortPrompt)
-        # xhigh is the 4th option (index 3)
-        assert prompt.selected_idx == 3
+        # OPTIONS = (default, low, medium, high, xhigh, max); xhigh is index 4
+        assert prompt.selected_idx == 4
         assert prompt.OPTIONS[prompt.selected_idx][0] == "xhigh"
 
 

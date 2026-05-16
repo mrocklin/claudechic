@@ -439,6 +439,7 @@ class EffortPrompt(BasePrompt):
     # Source of truth for supported effort levels. Used by `/effort <level>`
     # validation in commands.py — keep in sync if we add values.
     OPTIONS: tuple[tuple[str, str], ...] = (
+        ("default", "SDK default (reset to auto)"),
         ("low", "Fewer tool calls, terse output"),
         ("medium", "Balanced"),
         ("high", "Deeper reasoning (often the sweet spot)"),
