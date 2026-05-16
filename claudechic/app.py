@@ -274,6 +274,8 @@ class ChatApp(App):
         # Sidebar overlay state (for narrow screens)
         self._sidebar_overlay_open = False
         self._hamburger_btn: HamburgerButton | None = None
+        # Last text auto-copied from a mouse selection (dedup repeated mouse-ups)
+        self._last_auto_copied: str = ""
         # Available models from SDK (populated in _update_slash_commands)
         self._available_models: list[dict] = []
         # Track pending slash commands passed to Claude (for typo detection)
@@ -1582,10 +1584,17 @@ class ChatApp(App):
             chat_view.clear()
 
     def action_copy_selection(self) -> None:
-        selected = self.screen.get_selected_text()
+        selected = self._get_selected_text_safe()
         if selected:
             self.copy_to_clipboard(selected)
             self.notify("Copied to clipboard")
+
+    def _get_selected_text_safe(self) -> str:
+        """Read the current screen selection, swallowing stale-coordinate errors."""
+        try:
+            return self.screen.get_selected_text() or ""
+        except IndexError:
+            return ""
 
     def action_new_agent(self) -> None:
         """Create a new agent (prompts for name/path)."""
@@ -1643,36 +1652,40 @@ class ChatApp(App):
         self.set_timer(0.05, self._check_and_copy_selection)
 
     def copy_to_clipboard(self, text: str) -> None:
-        """Copy to both CLIPBOARD (OSC 52) and PRIMARY (xclip/xsel) on Linux."""
+        """OSC 52 + xclip/xsel to both X selections on Linux (Ctrl+V and middle-click)."""
         super().copy_to_clipboard(text)
         if not sys.platform.startswith("linux"):
             return
         import shutil
         import subprocess
 
-        for cmd in (
-            ["xclip", "-selection", "primary"],
-            ["xsel", "--primary", "--input"],
-        ):
-            if shutil.which(cmd[0]):
-                try:
-                    proc = subprocess.Popen(
-                        cmd,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    proc.stdin.write(text.encode())  # type: ignore[union-attr]
-                    proc.stdin.close()  # type: ignore[union-attr]
-                except Exception:
-                    pass
-                return
+        if shutil.which("xclip"):
+            cmds = [["xclip", "-selection", s] for s in ("clipboard", "primary")]
+        elif shutil.which("xsel"):
+            cmds = [["xsel", f"--{s}", "--input"] for s in ("clipboard", "primary")]
+        else:
+            return
+
+        for cmd in cmds:
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                proc.stdin.write(text.encode())  # type: ignore[union-attr]
+                proc.stdin.close()  # type: ignore[union-attr]
+            except Exception:
+                pass
 
     def _check_and_copy_selection(self) -> None:
-        selected = self.screen.get_selected_text()
-        if selected and len(selected.strip()) > 0:
-            self.copy_to_clipboard(selected)
-            self.notify("Copied", timeout=1)
+        selected = self._get_selected_text_safe().strip()
+        if not selected or selected == self._last_auto_copied:
+            return
+        self._last_auto_copied = selected
+        self.copy_to_clipboard(selected)
+        self.notify("Copied", timeout=1)
 
     def action_quit(self) -> None:  # type: ignore[override]
         # If history search is visible, cancel it
