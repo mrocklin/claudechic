@@ -4,7 +4,10 @@ Call :func:`apply_patches` once at process startup before any Markdown widget
 is constructed.
 """
 
+from textual.content import Content
 from textual.widgets._markdown import MarkdownFence
+
+from claudechic.highlight import highlight_text
 
 _original_fence_update_from_block = MarkdownFence._update_from_block
 
@@ -40,6 +43,27 @@ async def _fence_update_from_block(self, block):
     await _original_fence_update_from_block(self, block)
 
 
+def _fence_highlight(cls, code: str, language: str) -> Content:
+    """Route fenced-code-block highlighting through our safe highlighter.
+
+    Upstream ``MarkdownFence.highlight`` calls ``textual.highlight.highlight``,
+    which builds the Pygments lexer with ``tabsize=8`` while constructing
+    ``Content`` from the unexpanded source. Tab-indented languages (Go,
+    Makefiles) drift +7 chars per tab as a result — the same bug class fixed
+    in the diff view (commit d46b3af).
+
+    We delegate to :func:`claudechic.highlight.highlight_text` and expand
+    tabs at this boundary, mirroring how ``DiffWidget.__init__`` pre-expands
+    its input. ``self.code`` is read only by ``highlight()`` upstream, so the
+    expansion is invisible to copy/clipboard paths.
+
+    Wrapping in ``classmethod`` is required: plain function assignment to a
+    ``@classmethod`` slot strips the descriptor and breaks ``cls`` binding.
+    """
+    return highlight_text(code.expandtabs(8), language or "")
+
+
 def apply_patches() -> None:
     """Apply Textual monkey-patches. Safe to call multiple times."""
     MarkdownFence._update_from_block = _fence_update_from_block
+    MarkdownFence.highlight = classmethod(_fence_highlight)  # pyright: ignore[reportAttributeAccessIssue]

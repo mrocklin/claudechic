@@ -695,8 +695,8 @@ def test_word_diff_with_go_syntax():
     from claudechic.widgets.content.diff import (
         _word_diff_spans,
         _snap_to_tokens,
-        _highlight_lines,
     )
+    from claudechic.highlight import highlight_lines
 
     old_line = 'activeOrders: getValue("active",'
     new_line = 'dirtyOrders: getValue("dirty",'
@@ -709,8 +709,8 @@ def test_word_diff_with_go_syntax():
     assert len(new_spans) == 2  # "dirtyOrders" and "dirty"
 
     # Get syntax-highlighted content
-    old_highlighted = _highlight_lines(old_line, "go")
-    new_highlighted = _highlight_lines(new_line, "go")
+    old_highlighted = highlight_lines(old_line, "go")
+    new_highlighted = highlight_lines(new_line, "go")
 
     assert old_highlighted and new_highlighted
 
@@ -735,10 +735,10 @@ def test_highlight_text_preserves_tab_positions():
     ``stripnl=False, ensurenl=False`` (which keeps the default ``tabsize=0``)
     plus expanding tabs at the diff input.
     """
-    from claudechic.widgets.content.diff import _highlight_text
+    from claudechic.highlight import highlight_text
 
     src = 'func main() {\n\tprintln("hi")\n}'
-    content = _highlight_text(src, "go")
+    content = highlight_text(src, "go")
 
     # Content length must equal source length
     assert len(content.plain) == len(src)
@@ -764,15 +764,15 @@ def test_highlight_text_markdown_with_fenced_code():
     Trusting those indices splatted Python keyword colors onto the start of
     the file (e.g. across a heading), making markdown diffs look broken.
     """
-    from claudechic.widgets.content.diff import _highlight_text
+    from claudechic.highlight import highlight_text
 
     # Content after the code block is required: the markdown lexer's
     # fenced-block regex only matches with a newline after the closing ```,
-    # and ``_highlight_text`` strips lone trailing newlines via
+    # and ``highlight_text`` strips lone trailing newlines via
     # ``"\n".join(splitlines())``. Trailing content keeps that newline alive
     # so the python sub-lexer fires (the path that triggered the bug).
     src = "# Heading\n\n```python\ndef foo():\n    return 1\n```\n\nend\n"
-    content = _highlight_text(src, "markdown")
+    content = highlight_text(src, "markdown")
     rendered = content.plain
 
     # Every span must lie within bounds of the rendered content
@@ -805,7 +805,7 @@ def test_highlight_text_rst_with_code_block():
     fix covers RST too, since it's the second confirmed instance of the
     Pygments delegation anti-pattern in the wild.
     """
-    from claudechic.widgets.content.diff import _highlight_text
+    from claudechic.highlight import highlight_text
 
     src = (
         "Heading\n=======\n\n"
@@ -814,7 +814,7 @@ def test_highlight_text_rst_with_code_block():
         "        return 1\n\n"
         "end\n"
     )
-    content = _highlight_text(src, "rst")
+    content = highlight_text(src, "rst")
     rendered = content.plain
 
     for span in content._spans:
@@ -827,6 +827,86 @@ def test_highlight_text_rst_with_code_block():
         s for s in content._spans if s.start == def_pos and s.end == def_pos + 3
     ]
     assert def_spans, f"expected a span covering `def` at [{def_pos}:{def_pos + 3}]"
+
+
+def test_markdown_fence_highlight_preserves_tab_positions():
+    """Patched ``MarkdownFence.highlight`` must not drift on tab-indented code.
+
+    Regression test for the bug class fixed in commit d46b3af, now applied to
+    the main chat view via :mod:`claudechic._textual_patches`. Upstream
+    ``textual.highlight.highlight`` builds the Pygments lexer with
+    ``tabsize=8`` (which expands ``\\t`` to 8 chars *inside* the token text)
+    while constructing ``Content`` from the **unexpanded** source. The
+    position accumulator advances by ``len(token)`` = 8 per tab but the
+    underlying source only has 1 char — so spans extend +7 chars per tab
+    *past* ``len(content.plain)`` and land out of bounds.
+    """
+    from textual.widgets._markdown import MarkdownFence
+
+    from claudechic._textual_patches import apply_patches
+
+    apply_patches()
+
+    src = 'func main() {\n\tprintln("hi")\n}'
+    content = MarkdownFence.highlight(src, "go")
+
+    # Patched path expands tabs at the boundary; rendered length matches
+    # the tab-expanded source length exactly.
+    expected = src.expandtabs(8)
+    assert len(content.plain) == len(expected)
+
+    for span in content._spans:
+        assert 0 <= span.start <= span.end <= len(content.plain), (
+            f"span {span} out of bounds for len={len(content.plain)}"
+        )
+
+    # Spot-check that the keyword `func` got highlighted at position 0
+    keyword_spans = [s for s in content._spans if s.start == 0 and s.end == 4]
+    assert keyword_spans, "expected a span covering `func` at [0:4]"
+
+
+def test_markdown_fence_highlight_delegates_through_sub_lexer():
+    """Tab drift must not leak through markdown's sub-lexer delegation.
+
+    The previous version of this test used a markdown fence containing a
+    fenced python block and asserted spans landed at correct positions —
+    but upstream ``textual.highlight.highlight`` already uses
+    ``get_tokens()`` accumulation, so the sub-lexer index-reset bug never
+    affected the fence path (it only ever existed in the diff view's
+    earlier ``get_tokens_unprocessed`` code path, fixed in e854057). That
+    test passed against unpatched upstream, giving false coverage.
+
+    This version exercises something the patch *actually* changes: a
+    markdown fence wrapping tab-indented code. Upstream's ``tabsize=8``
+    lexer drifts position past ``len(content.plain)`` (the tab bug);
+    routing through the patched path with boundary tab-expansion fixes it,
+    even across the markdown-to-sub-lexer delegation boundary.
+    """
+    from textual.widgets._markdown import MarkdownFence
+
+    from claudechic._textual_patches import apply_patches
+
+    apply_patches()
+
+    # Markdown fence body containing tab-indented Go inside a nested fence.
+    # The outer markdown lexer delegates to the go sub-lexer for the inner
+    # block; tabs survive the delegation, and the patched boundary expands
+    # them before highlighting. No trailing ``\n`` — ``highlight_text``
+    # normalizes via ``"\n".join(splitlines())`` which strips one.
+    src = 'Example:\n\n```go\nfunc main() {\n\tprintln("hi")\n}\n```'
+    content = MarkdownFence.highlight(src, "markdown")
+
+    expected = src.expandtabs(8)
+    assert len(content.plain) == len(expected), (
+        f"rendered length {len(content.plain)} != expandtabs length "
+        f"{len(expected)} — tab drift slipped through sub-lexer delegation"
+    )
+
+    for span in content._spans:
+        assert 0 <= span.start <= span.end <= len(content.plain), (
+            f"span {span} out of bounds for len={len(content.plain)} — "
+            f"tab drift accumulated through the markdown→go delegation"
+        )
 
 
 def test_diff_widget_expands_tabs():

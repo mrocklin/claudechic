@@ -2,16 +2,13 @@
 
 import difflib
 import re
-from functools import lru_cache
 
-from pygments.lexers import get_lexer_by_name
-from pygments.util import ClassNotFound
-from textual.content import Content, Span
+from textual.content import Content
 from textual.containers import HorizontalScroll
-from textual.highlight import HighlightTheme
 from textual.widgets import Static
 
 from claudechic.formatting import get_lang_from_path
+from claudechic.highlight import highlight_lines
 
 
 # Theme-aware diff styles - dark and light variants
@@ -31,60 +28,6 @@ LIGHT_THEME_STYLES = {
     "removed_indicator": "#aa6666",  # Visible red for - indicator
     "added_indicator": "#66aa66",  # Visible green for + indicator
 }
-
-
-@lru_cache(maxsize=64)
-def _get_cached_lexer(language: str):
-    """Cache Pygments lexers to avoid repeated loading (~15% CPU savings)."""
-    try:
-        return get_lexer_by_name(language, stripnl=False, ensurenl=False)
-    except ClassNotFound:
-        return None
-
-
-def _highlight_text(text: str, language: str) -> Content:
-    """Syntax highlight text using cached lexer and default HighlightTheme.
-
-    Accumulates span positions from token-text lengths rather than trusting
-    the lexer's reported source indices. Some lexers (notably ``markdown``,
-    which delegates fenced code blocks to a sub-lexer) emit indices that
-    reset to 0 inside embedded blocks, so using those indices directly would
-    splat inner-block spans onto the start of the document.
-
-    Safe because the cached lexer is built with ``stripnl=False,
-    ensurenl=False`` (see ``_get_cached_lexer``) and default ``tabsize=0``,
-    and we expand tabs at the diff input — so tokens preserve source text
-    exactly (verified across markdown/python/go/js/rust).
-    """
-    if not language:
-        return Content(text)
-
-    lexer = _get_cached_lexer(language)
-    if lexer is None:
-        return Content(text)
-
-    text = "\n".join(text.splitlines())
-    spans: list[Span] = []
-
-    pos = 0
-    for token_type, token in lexer.get_tokens(text):
-        current_type = token_type
-        while True:
-            if style := HighlightTheme.STYLES.get(current_type):
-                spans.append(Span(pos, pos + len(token), style))
-                break
-            if (current_type := current_type.parent) is None:
-                break
-        pos += len(token)
-
-    return Content(text, spans=spans).stylize_before("$text")
-
-
-def _highlight_lines(text: str, language: str) -> list[Content]:
-    """Syntax highlight text and split into lines."""
-    if not text:
-        return []
-    return _highlight_text(text, language).split("\n")
 
 
 def _snap_to_tokens(
@@ -317,8 +260,8 @@ class DiffWidget(HorizontalScroll):
             return None
 
         lang = get_lang_from_path(self._path)
-        old_highlighted = _highlight_lines(self._old, lang)
-        new_highlighted = _highlight_lines(self._new, lang)
+        old_highlighted = highlight_lines(self._old, lang)
+        new_highlighted = highlight_lines(self._new, lang)
 
         sm = difflib.SequenceMatcher(None, old_lines, new_lines)
         grouped = list(sm.get_grouped_opcodes(self._context_lines))
