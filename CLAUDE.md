@@ -232,7 +232,6 @@ Agent status indicators: ○ (idle), ● gray (busy), ● orange (needs input)
 ### Session Management
 - `/resume` - Show session picker
 - `/resume <id>` - Resume specific session
-- `/compactish` - Compact session to reduce context (dry run with `-n`)
 - `/usage` - Show API rate limit usage
 - `/clear` - Clear chat UI
 - `/shell <cmd>` - Suspend TUI and run shell command

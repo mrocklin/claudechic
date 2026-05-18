@@ -92,7 +92,6 @@ COMMANDS: list[tuple[str, str, list[str]]] = [
     ("/agent", "Create or list agents", ["/agent close"]),
     ("/shell", "Run shell command (or -i for interactive)", []),
     ("/theme", "Search themes", []),
-    ("/compactish", "Compact session to reduce context", []),
     ("/usage", "Show API rate limit usage", []),
     ("/model", "Change model", []),
     ("/effort", "Change effort level (default/low/medium/high/xhigh/max)", []),
@@ -136,8 +135,6 @@ def get_help_commands() -> list[tuple[str, str]]:
             display_name = "/agent [name] [path]"
         elif name == "/shell":
             display_name = "/shell <cmd>"
-        elif name == "/compactish":
-            display_name = "/compactish [-n]"
         elif name == "/worktree":
             display_name = "/worktree <name> | finish [branch]"
         elif name == "/reviews":
@@ -202,10 +199,6 @@ def handle_command(app: "ChatApp", prompt: str) -> bool:
         _track_command(app, "theme")
         app.search_themes()
         return True
-
-    if cmd.startswith("/compactish"):
-        _track_command(app, "compactish")
-        return _handle_compactish(app, cmd)
 
     if cmd == "/usage":
         _track_command(app, "usage")
@@ -671,57 +664,6 @@ def _handle_review(app: "ChatApp", context: str | None) -> bool:
     app._send_to_active_agent(
         instructions, display_as="/reviewer" + (f" {context}" if context else "")
     )
-    return True
-
-
-def _handle_compactish(app: "ChatApp", command: str) -> bool:
-    """Handle /compactish command - compact the current session.
-
-    Flags:
-        -n, --dry: Show stats without modifying
-        -a, --aggressive: Use lower size thresholds
-        --no-reconnect: Don't reconnect after compaction
-    """
-    from claudechic.compact import compact_session, format_compact_summary
-    from claudechic.widgets import ChatMessage
-
-    agent = app._agent
-    if not agent or not agent.session_id:
-        app.notify("No active session to compact", severity="warning")
-        return True
-
-    session_id = agent.session_id
-    parts = command.split()
-
-    # Parse flags
-    dry_run = "--dry" in parts or "-n" in parts
-    aggressive = "--aggressive" in parts or "-a" in parts
-    reconnect = "--no-reconnect" not in parts
-
-    result = compact_session(
-        session_id, cwd=agent.cwd, aggressive=aggressive, dry_run=dry_run
-    )
-    if "error" in result:
-        app.notify(f"Error: {result['error']}", severity="error")
-        return True
-
-    # Display summary table
-    summary_md = format_compact_summary(result, dry_run=dry_run)
-    chat_view = app._chat_view
-    if chat_view:
-        summary_msg = ChatMessage(summary_md)
-        summary_msg.add_class("system-message")
-        chat_view.mount(summary_msg)
-        chat_view.scroll_if_tailing()
-
-    if dry_run:
-        app.notify("Dry run - no changes made", timeout=3)
-    elif reconnect:
-        app.run_worker(app._reconnect_agent(agent, session_id))
-        app.notify("Session compacted, reconnecting...", timeout=3)
-    else:
-        app.notify("Session compacted", timeout=3)
-
     return True
 
 
