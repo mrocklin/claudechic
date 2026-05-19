@@ -1,5 +1,12 @@
 """Resource indicator widgets - context bar, CPU monitor, and process indicator."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from claudechic.usage import UsageInfo
+
 import psutil
 
 from textual.app import RenderResult
@@ -111,6 +118,92 @@ class ContextBar(IndicatorWidget):
 
         if isinstance(self.app, ChatApp):
             self.app._handle_prompt("/context")
+
+
+class UsageIndicator(IndicatorWidget):
+    """Display API rate limit as a compact bar in the footer.
+
+    Shows the most constrained (highest utilization) of the 5-hour or 7-day
+    limits.  Hidden until the first fetch completes.  Click to open the full
+    /usage report.
+    """
+
+    DEFAULT_CSS = """
+    UsageIndicator {
+        width: auto;
+    }
+    UsageIndicator.hidden {
+        display: none;
+    }
+    """
+
+    # -1 means "not yet fetched / unavailable"
+    utilization = reactive(-1.0)
+    limit_label = reactive("")  # "5hr" or "7d"
+
+    def update_usage(self, usage: UsageInfo) -> None:
+        """Push fresh usage data into the widget."""
+        candidates = [
+            ("5hr", usage.five_hour),
+            ("7d", usage.seven_day),
+        ]
+        available = [(lbl, lim) for lbl, lim in candidates if lim is not None]
+        if not available:
+            self.utilization = -1.0
+            self.add_class("hidden")
+            return
+
+        lbl, lim = max(available, key=lambda x: x[1].utilization)
+        self.limit_label = lbl
+        self.utilization = lim.utilization
+        self.remove_class("hidden")
+
+    def render(self) -> RenderResult:
+        if self.utilization < 0:
+            return Text("")
+
+        pct = min(self.utilization / 100.0, 1.0)
+        bar_width = 8
+        filled = int(pct * bar_width)
+
+        theme = self.app.current_theme
+        warning = theme.warning if isinstance(theme.warning, str) else "#aaaa00"
+        error = theme.error if isinstance(theme.error, str) else "#cc3333"
+        if theme.dark:
+            low_fill, empty_color, empty_text = "#666666", "#333333", "white"
+        else:
+            low_fill, empty_color, empty_text = "#999999", "#dddddd", "black"
+
+        if pct < 0.5:
+            fill_color, text_color = low_fill, empty_text
+        elif pct < 0.8:
+            fill_color, text_color = warning, "black"
+        else:
+            fill_color, text_color = error, "white"
+
+        # Render percentage text centered inside the colored block
+        pct_str = f"{self.utilization:.0f}%"
+        start = (bar_width - len(pct_str)) // 2
+        bar = Text()
+        for i in range(bar_width):
+            bg = fill_color if i < filled else empty_color
+            if start <= i < start + len(pct_str):
+                fg = text_color if i < filled else empty_text
+                bar.append(pct_str[i - start], style=f"{fg} on {bg}")
+            else:
+                bar.append(" ", style=f"on {bg}")
+
+        result = Text()
+        result.append(f"{self.limit_label} ", style="dim")
+        result.append_text(bar)
+        return result
+
+    def on_click(self, event) -> None:
+        """Show the full /usage report on click."""
+        from claudechic.app import ChatApp
+
+        if isinstance(self.app, ChatApp):
+            self.app._handle_usage_command()
 
 
 class ProcessIndicator(IndicatorWidget):

@@ -69,6 +69,7 @@ from claudechic.formatting import strip_ansi, trim_model_name
 from claudechic.history import append_to_history
 from claudechic.widgets import (
     ContextBar,
+    UsageIndicator,
     ChatMessage,
     ChatInput,
     ConnectingIndicator,
@@ -255,6 +256,7 @@ class ChatApp(App):
         self._review_panel: ReviewPanel | None = None
         self._process_panel: ProcessPanel | None = None
         self._context_bar: ContextBar | None = None
+        self._usage_indicator: UsageIndicator | None = None
         self._right_sidebar: Vertical | None = None
         self._input_container: Vertical | None = None
         self._chat_input: ChatInput | None = None
@@ -471,6 +473,12 @@ class ChatApp(App):
         if self._context_bar is None:
             self._context_bar = self.query_one("#context-bar", ContextBar)
         return self._context_bar
+
+    @property
+    def usage_indicator(self) -> UsageIndicator:
+        if self._usage_indicator is None:
+            self._usage_indicator = self.query_one("#usage-indicator", UsageIndicator)
+        return self._usage_indicator
 
     @property
     def right_sidebar(self) -> Vertical:
@@ -831,6 +839,10 @@ class ChatApp(App):
 
         # Start background process polling
         self.set_interval(2.0, self._poll_background_processes)
+
+        # Fetch API usage for footer indicator (initial + every 5 minutes)
+        self.refresh_usage()
+        self.set_interval(300.0, self.refresh_usage)
 
         # Register app for MCP tools
         set_app(self)
@@ -2170,6 +2182,16 @@ class ChatApp(App):
         await agent.connect(options)
         self.refresh_context()
         self.notify("New session started")
+
+    @work(group="refresh_usage", exclusive=True, exit_on_error=False)
+    async def refresh_usage(self) -> None:
+        """Fetch API usage and update the footer indicator (silent, no chat output)."""
+        from claudechic.usage import fetch_usage
+
+        usage = await fetch_usage()
+        if usage.error:
+            return
+        self.status_footer.update_usage(usage)
 
     @work(group="usage", exclusive=True, exit_on_error=False)
     async def _handle_usage_command(self) -> None:

@@ -25,6 +25,7 @@ from claudechic.widgets.layout.indicators import (
     CPUBar,
     ContextBar,
     ProcessIndicator,
+    UsageIndicator,
 )
 from claudechic.widgets.layout.processes import (
     ProcessPanel,
@@ -56,6 +57,7 @@ __all__ = [
     "CPUBar",
     "ContextBar",
     "ProcessIndicator",
+    "UsageIndicator",
     "ProcessPanel",
     "ProcessItem",
     "ReviewPanel",
