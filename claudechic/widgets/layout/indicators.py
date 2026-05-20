@@ -131,6 +131,7 @@ class UsageIndicator(IndicatorWidget):
     DEFAULT_CSS = """
     UsageIndicator {
         width: auto;
+        padding: 0 0 0 1;
     }
     UsageIndicator.hidden {
         display: none;
