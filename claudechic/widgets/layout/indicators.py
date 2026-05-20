@@ -158,44 +158,39 @@ class UsageIndicator(IndicatorWidget):
         self.utilization = lim.utilization
         self.remove_class("hidden")
 
+    # Clockwise fill sequence: 12 o'clock → 3 → 6 → 9 → full.
+    # Each character adds one quarter-turn of fill.
+    _PIE_STEPS = [
+        (0.20, "○"),  #   0–20 %: empty ring
+        (0.40, "◔"),  #  20–40 %: upper-right quadrant (12→3)
+        (0.60, "◑"),  #  40–60 %: right half (12→6)
+        (0.80, "◕"),  #  60–80 %: all but upper-left (12→9)
+        (1.01, "●"),  #  80–100%: full disc
+    ]
+
     def render(self) -> RenderResult:
         if self.utilization < 0:
             return Text("")
 
         pct = min(self.utilization / 100.0, 1.0)
-        bar_width = 8
-        filled = int(pct * bar_width)
+
+        pie = next(ch for threshold, ch in self._PIE_STEPS if pct < threshold)
 
         theme = self.app.current_theme
         warning = theme.warning if isinstance(theme.warning, str) else "#aaaa00"
         error = theme.error if isinstance(theme.error, str) else "#cc3333"
-        if theme.dark:
-            low_fill, empty_color, empty_text = "#666666", "#333333", "white"
-        else:
-            low_fill, empty_color, empty_text = "#999999", "#dddddd", "black"
+        muted = "#888888" if theme.dark else "#666666"
 
         if pct < 0.5:
-            fill_color, text_color = low_fill, empty_text
+            color = muted
         elif pct < 0.8:
-            fill_color, text_color = warning, "black"
+            color = warning
         else:
-            fill_color, text_color = error, "white"
-
-        # Render percentage text centered inside the colored block
-        pct_str = f"{self.utilization:.0f}%"
-        start = (bar_width - len(pct_str)) // 2
-        bar = Text()
-        for i in range(bar_width):
-            bg = fill_color if i < filled else empty_color
-            if start <= i < start + len(pct_str):
-                fg = text_color if i < filled else empty_text
-                bar.append(pct_str[i - start], style=f"{fg} on {bg}")
-            else:
-                bar.append(" ", style=f"on {bg}")
+            color = error
 
         result = Text()
-        result.append(f"{self.limit_label} ", style="dim")
-        result.append_text(bar)
+        result.append(pie, style=color)
+        result.append(f" {self.limit_label}", style="dim")
         return result
 
     def on_click(self, event) -> None:
