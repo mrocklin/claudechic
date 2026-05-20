@@ -43,7 +43,7 @@ async def _fence_update_from_block(self, block):
     await _original_fence_update_from_block(self, block)
 
 
-def _fence_highlight(cls, code: str, language: str) -> Content:
+def _fence_highlight(cls, code: str, language: str, **kwargs) -> Content:
     """Route fenced-code-block highlighting through our safe highlighter.
 
     Upstream ``MarkdownFence.highlight`` calls ``textual.highlight.highlight``,
@@ -57,9 +57,14 @@ def _fence_highlight(cls, code: str, language: str) -> Content:
     its input. ``self.code`` is read only by ``highlight()`` upstream, so the
     expansion is invisible to copy/clipboard paths.
 
+    ``**kwargs`` swallows theme-control args upstream adds over time (e.g.
+    ``ansi``, ``dark`` in Textual 8.x); we keep our own theme inside
+    ``highlight_text``.
+
     Wrapping in ``classmethod`` is required: plain function assignment to a
     ``@classmethod`` slot strips the descriptor and breaks ``cls`` binding.
     """
+    del cls, kwargs
     return highlight_text(code.expandtabs(8), language or "")
 
 
