@@ -155,7 +155,10 @@ def format_reset_time(dt: datetime | None) -> str:
     # Format hour without leading zero (cross-platform)
     hour = local_dt.hour % 12 or 12
     ampm = "am" if local_dt.hour < 12 else "pm"
-    time_str = f"{hour}{ampm}"
+    if local_dt.minute:
+        time_str = f"{hour}:{local_dt.minute:02d}{ampm}"
+    else:
+        time_str = f"{hour}{ampm}"
 
     # If same day, just show time
     if local_dt.date() == now.date():
