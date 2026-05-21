@@ -178,9 +178,9 @@ class UsageIndicator(IndicatorWidget):
         pie = next(ch for threshold, ch in self._PIE_STEPS if pct < threshold)
 
         theme = self.app.current_theme
-        warning = theme.warning if isinstance(theme.warning, str) else "#aaaa00"
+        warning = theme.warning if isinstance(theme.warning, str) else "#c07800"
         error = theme.error if isinstance(theme.error, str) else "#cc3333"
-        muted = "#888888" if theme.dark else "#666666"
+        muted = "#888888" if theme.dark else "#555555"
 
         if pct < 0.5:
             color = muted
@@ -191,7 +191,7 @@ class UsageIndicator(IndicatorWidget):
 
         result = Text()
         result.append(pie, style=color)
-        result.append(f" {self.limit_label}", style="dim")
+        result.append(f" {self.limit_label}", style=muted)
         return result
 
     def on_click(self, event) -> None:
