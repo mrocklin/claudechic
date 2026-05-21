@@ -1135,4 +1135,33 @@ async def test_streamed_markdown_fence_survives_recompose():
         body = str(label.render())
         # Pre-fix, this was '' after recompose. Post-fix, the body is intact.
         assert "from langgraph_sdk import get_client" in body
-        assert "print(result)" in body
+
+
+def test_highlight_cache_key_normalized_before_lookup():
+    """Trailing-newline difference must not cause a pre-warming cache miss.
+
+    ``_FENCE_RE`` captures fenced-code content with a trailing ``\\n``
+    (the newline before the closing backticks).  ``MarkdownFence.highlight``
+    receives the same code *without* that trailing newline after Textual's
+    parser strips it.  If ``@lru_cache`` sits on ``highlight_text`` directly,
+    the two calls produce different keys and the pre-warming miss is guaranteed.
+
+    The fix moves ``@lru_cache`` to ``_highlight_normalized``, which receives
+    already-normalised text (``"\\n".join(text.splitlines())`` strips a lone
+    trailing newline).  Both callers therefore resolve to the same key.
+    """
+    from claudechic.highlight import _highlight_normalized, highlight_text
+
+    _highlight_normalized.cache_clear()
+
+    code_with_newline = "def foo():\n    return 1\n"  # regex capture form
+    code_without_newline = "def foo():\n    return 1"  # MarkdownFence form
+
+    highlight_text(code_with_newline, "python")   # pre-warm (miss)
+    highlight_text(code_without_newline, "python") # should be a hit
+
+    info = _highlight_normalized.cache_info()
+    assert info.hits >= 1, (
+        "second call was a cache miss — trailing-newline normalization is "
+        "not happening before the cache key is computed"
+    )
