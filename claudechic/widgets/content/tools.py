@@ -1,5 +1,6 @@
 """Tool display widgets - ToolUseWidget and TaskWidget."""
 
+import asyncio
 import json
 import logging
 import re
@@ -9,6 +10,7 @@ from rich.text import Text
 
 from textual.app import ComposeResult
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Markdown, Static
 
 from claudechic.widgets.primitives.button import Button
@@ -75,12 +77,61 @@ def _extract_text_content(content: str | list) -> str:
     return str(content)
 
 
+# Matches fenced code blocks: ```lang\n<code>```.  Used to extract (code,
+# lang) pairs for highlight pre-warming.  Non-greedy so adjacent fences don't
+# bleed into each other.  Imperfect by design — misses edge cases like nested
+# backticks, but a missed fence is just a cache miss (minor), not a crash.
+_FENCE_RE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
+
+
 class EditPlanRequested(Message):
     """Posted when user clicks Edit Plan button."""
 
     def __init__(self, plan_path: Path) -> None:
         super().__init__()
         self.plan_path = plan_path
+
+
+class PlanMarkdownWidget(Widget):
+    """Markdown display for plan content with async highlight pre-warming.
+
+    Mounts Markdown only after pre-running Pygments for every fenced code
+    block in a thread pool.  Because highlight_text is lru_cache'd, the
+    subsequent MarkdownFence.__init__ calls on the event loop become instant
+    cache hits instead of blocking Pygments tokenisation (which caused the
+    100-500ms UI freeze when ExitPlanMode rendered a code-heavy plan).
+    """
+
+    DEFAULT_CSS = """
+    PlanMarkdownWidget {
+        height: auto;
+    }
+    """
+
+    def __init__(self, plan_content: str) -> None:
+        super().__init__()
+        self._plan_content = plan_content
+
+    async def on_mount(self) -> None:
+        from claudechic.highlight import highlight_text
+
+        loop = asyncio.get_running_loop()
+        fences = [
+            (m.group(2), m.group(1) or "")
+            for m in _FENCE_RE.finditer(self._plan_content)
+        ]
+        if fences:
+            # Pre-warm the highlight cache concurrently in the thread pool.
+            # Each call runs Pygments in a worker thread; highlight_text's
+            # lru_cache stores the result so the later MarkdownFence.__init__
+            # calls on the event loop are free cache hits.
+            await asyncio.gather(*(
+                loop.run_in_executor(None, highlight_text, code.expandtabs(8), lang)
+                for code, lang in fences
+            ))
+        # All expensive Pygments work is done — mount Markdown on the event
+        # loop now; MarkdownFence.__init__ hits the cache for every fence.
+        await self.mount(Markdown(self._plan_content, id="plan-content"))
 
 
 class ToolUseWidget(BaseToolWidget):
@@ -126,7 +177,10 @@ class ToolUseWidget(BaseToolWidget):
         if self.block.name == ToolName.SKILL and not self.block.input.get("args"):
             yield Static(self._header, classes="skill-header", markup=False)
             return
-        # ExitPlanMode: show plan as Markdown with special styling
+        # ExitPlanMode: show plan as Markdown with special styling.
+        # PlanMarkdownWidget pre-warms the highlight_text cache in threads
+        # before mounting Markdown, so MarkdownFence.__init__ calls on the
+        # event loop are instant cache hits instead of blocking Pygments work.
         if self.block.name == ToolName.EXIT_PLAN_MODE:
             self.add_class("exit-plan-mode")
             plan_content = self._get_plan_content()
@@ -134,7 +188,7 @@ class ToolUseWidget(BaseToolWidget):
                 title=self._header, collapsed=self._initial_collapsed
             ):
                 if plan_content:
-                    yield Markdown(plan_content, id="plan-content")
+                    yield PlanMarkdownWidget(plan_content)
                 else:
                     yield Static("(Plan content not available)", id="tool-output")
                 if self._plan_path:
@@ -207,19 +261,17 @@ class ToolUseWidget(BaseToolWidget):
     def _try_update_plan_content(self, collapsible: QuietCollapsible) -> None:
         """Try to update ExitPlanMode plan content if it wasn't available at compose time."""
         try:
-            # Check if we have the placeholder - if plan-content exists, we're good
-            collapsible.query_one("#plan-content", Markdown)
-            return  # Already has Markdown content
+            collapsible.query_one(PlanMarkdownWidget)
+            return  # Already mounting or mounted
         except Exception:
-            pass  # No Markdown, check for tool-output placeholder
+            pass
 
-        # Try to get plan content now
         plan_content = self._get_plan_content()
         if plan_content:
             try:
                 output_widget = collapsible.query_one("#tool-output", Static)
                 output_widget.remove()
-                collapsible.mount(Markdown(plan_content, id="plan-content"))
+                collapsible.mount(PlanMarkdownWidget(plan_content))
             except Exception:
                 pass
 

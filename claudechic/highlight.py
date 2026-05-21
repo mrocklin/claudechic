@@ -40,6 +40,7 @@ def _get_cached_lexer(language: str):
         return None
 
 
+@lru_cache(maxsize=256)
 def highlight_text(text: str, language: str) -> Content:
     """Syntax highlight text using cached lexer and default HighlightTheme.
 
