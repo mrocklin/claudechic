@@ -8,6 +8,7 @@ from textual.app import ComposeResult
 from textual.events import Click
 from textual.message import Message
 from textual.reactive import reactive
+from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Static, Label, ListItem
 from rich.text import Text
@@ -198,11 +199,28 @@ class FileItem(SidebarItem):
     """
 
     class Selected(Message):
-        """Posted when file is clicked."""
+        """Posted when file is clicked.
 
-        def __init__(self, file_path: Path) -> None:
+        - plain click: diff vs HEAD (uncommitted changes)
+        - ctrl+click: diff this branch vs its base branch
+        - double-click: open the file in $EDITOR
+        """
+
+        def __init__(
+            self,
+            file_path: Path,
+            *,
+            ctrl: bool = False,
+            double_click: bool = False,
+        ) -> None:
             self.file_path = file_path
+            self.ctrl = ctrl
+            self.double_click = double_click
             super().__init__()
+
+    # Wait this long after a single click before firing it, so a double-click
+    # can cancel and supersede. Trade-off: single-click diff has ~300ms lag.
+    DOUBLE_CLICK_INTERVAL = 0.3
 
     max_name_length: int = 14
 
@@ -218,6 +236,7 @@ class FileItem(SidebarItem):
         self.additions = additions
         self.deletions = deletions
         self.untracked = untracked
+        self._click_timer: Timer | None = None
 
     def _truncate_front(self, name: str) -> str:
         """Truncate from front with ellipsis if too long."""
@@ -238,8 +257,32 @@ class FileItem(SidebarItem):
             parts.append((f" -{self.deletions}", "dim red"))
         return Text.assemble(*parts)
 
-    def on_click(self, event) -> None:
-        self.post_message(self.Selected(self.file_path))
+    def on_click(self, event: Click) -> None:
+        # Double-click supersedes any pending single-click action.
+        if event.chain >= 2:
+            if self._click_timer is not None:
+                self._click_timer.stop()
+                self._click_timer = None
+            self.post_message(self.Selected(self.file_path, double_click=True))
+            return
+
+        # Single click: defer briefly so a second click can cancel and upgrade
+        # this into a double-click before the diff screen pushes.
+        if self._click_timer is not None:
+            self._click_timer.stop()
+        ctrl = event.ctrl
+
+        def fire_single() -> None:
+            self._click_timer = None
+            self.post_message(self.Selected(self.file_path, ctrl=ctrl))
+
+        self._click_timer = self.set_timer(self.DOUBLE_CLICK_INTERVAL, fire_single)
+
+    def on_unmount(self) -> None:
+        # Pending click timer would otherwise fire on a removed widget.
+        if self._click_timer is not None:
+            self._click_timer.stop()
+            self._click_timer = None
 
 
 class FilesSection(SidebarSection):
