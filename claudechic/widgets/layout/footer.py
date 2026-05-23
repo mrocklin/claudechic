@@ -133,9 +133,9 @@ class StatusFooter(Static):
             yield PermissionModeLabel(
                 "Auto-edit: off", id="permission-mode-label", classes="footer-label"
             )
-            yield UsageIndicator(id="usage-indicator", classes="hidden")
             yield Static("", id="footer-spacer")
             yield ProcessIndicator(id="process-indicator", classes="hidden")
+            yield UsageIndicator(id="usage-indicator", classes="hidden")
             yield ContextBar(id="context-bar")
             yield CPUBar(id="cpu-bar")
             yield Static("", id="branch-label", classes="footer-label")

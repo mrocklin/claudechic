@@ -131,7 +131,7 @@ class UsageIndicator(IndicatorWidget):
     DEFAULT_CSS = """
     UsageIndicator {
         width: auto;
-        padding: 0 0 0 1;
+        padding: 0 1;
     }
     UsageIndicator.hidden {
         display: none;
@@ -190,8 +190,8 @@ class UsageIndicator(IndicatorWidget):
             color = error
 
         result = Text()
+        result.append(f"{self.limit_label} ", style=muted)
         result.append(pie, style=color)
-        result.append(f" {self.limit_label}", style=muted)
         return result
 
     def on_click(self, event) -> None:
