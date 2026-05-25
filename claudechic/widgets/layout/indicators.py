@@ -138,9 +138,12 @@ class UsageIndicator(IndicatorWidget):
     }
     """
 
-    # -1 means "not yet fetched / unavailable"
-    utilization = reactive(-1.0)
-    limit_label = reactive("")  # "5hr" or "7d"
+    # -1 means "not yet fetched / unavailable".
+    # layout=True so the widget re-measures its auto width when these change: the
+    # label can widen ("7d" → "5hr"), and without a relayout the widget keeps its
+    # old, narrower width and crops the now-trailing pie glyph.
+    utilization = reactive(-1.0, layout=True)
+    limit_label = reactive("", layout=True)  # "5hr" or "7d"
 
     def update_usage(self, usage: UsageInfo) -> None:
         """Push fresh usage data into the widget."""

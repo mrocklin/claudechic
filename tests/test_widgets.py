@@ -432,6 +432,54 @@ async def test_context_bar_scales_with_max_tokens():
 
 
 @pytest.mark.asyncio
+async def test_usage_indicator_keeps_pie_when_label_widens():
+    """Regression: the pie glyph must survive a label-widening update.
+
+    The footer's UsageIndicator is width:auto. When the active limit switches
+    from "7d" to "5hr" the rendered content grows by one cell. If the reactive
+    update only repaints (no relayout) the widget keeps its old, narrower width
+    and crops the now-trailing pie glyph. update_usage writes limit_label then
+    utilization as separate reactive assignments, so both must request layout.
+    """
+    from pathlib import Path
+    import claudechic
+    from claudechic.usage import UsageInfo, UsageLimit
+
+    class FooterApp(App):
+        # Load the real stylesheet so the footer's auto-width layout is exercised.
+        CSS_PATH = str(Path(claudechic.__file__).parent / "styles.tcss")
+
+        def compose(self) -> ComposeResult:
+            yield StatusFooter(id="status-footer")
+
+    app = FooterApp()
+    # Narrow-ish width with a long branch keeps the footer space-constrained,
+    # matching the real-world report.
+    async with app.run_test(size=(128, 24)) as pilot:
+        footer = app.query_one(StatusFooter)
+        footer.model = "Opus 4.7"
+        footer.branch = "boldsign-webhook-signature"
+
+        # First render: 7-day limit wins -> short "7d" label.
+        footer.update_usage(
+            UsageInfo(UsageLimit(10, None), UsageLimit(30, None), None)
+        )
+        await pilot.pause()
+        # Then the 5-hour limit wins -> wider "5hr" label, pushing the pie right.
+        footer.update_usage(
+            UsageInfo(UsageLimit(23, None), UsageLimit(0, None), None)
+        )
+        await pilot.pause()
+
+        indicator = app.query_one("#usage-indicator")
+        painted = "".join(segment.text for segment in indicator.render_line(0))
+        assert "5hr" in painted
+        assert any(glyph in painted for glyph in "○◔◑◕●"), (
+            f"usage pie glyph was cropped after the label widened: {painted!r}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_todo_panel_updates():
     """TodoPanel displays and updates todos."""
     app = WidgetTestApp(lambda: TodoPanel(id="panel"))
