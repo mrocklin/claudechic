@@ -1,3 +1,8 @@
+# RETIRED
+
+This project has been retired.  The Claude and Codex desktop apps have evolved
+so that this project is no longer that useful.  🎉
+
 # Claude Chic
 
 A stylish terminal UI for [Claude Code](https://docs.anthropic.com/en/docs/claude-code), built with [Textual](https://textual.textualize.io/).
