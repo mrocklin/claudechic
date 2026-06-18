@@ -40,6 +40,38 @@ def _get_cached_lexer(language: str):
         return None
 
 
+@lru_cache(maxsize=256)
+def _highlight_normalized(text: str, language: str) -> Content:
+    """Highlight pre-normalized text (no trailing newline, LF-only line endings).
+
+    The cache key is the *normalized* text so that callers with different raw
+    representations of the same content (e.g. trailing newline present vs.
+    absent, CRLF vs LF) all hit the same cache entry.  Callers must normalize
+    via ``"\\n".join(raw.splitlines())`` before calling — ``highlight_text``
+    does this automatically.
+    """
+    if not language:
+        return Content(text)
+
+    lexer = _get_cached_lexer(language)
+    if lexer is None:
+        return Content(text)
+
+    spans: list[Span] = []
+    pos = 0
+    for token_type, token in lexer.get_tokens(text):
+        current_type = token_type
+        while True:
+            if style := HighlightTheme.STYLES.get(current_type):
+                spans.append(Span(pos, pos + len(token), style))
+                break
+            if (current_type := current_type.parent) is None:
+                break
+        pos += len(token)
+
+    return Content(text, spans=spans).stylize_before("$text")
+
+
 def highlight_text(text: str, language: str) -> Content:
     """Syntax highlight text using cached lexer and default HighlightTheme.
 
@@ -55,33 +87,12 @@ def highlight_text(text: str, language: str) -> Content:
     tokens preserve source text exactly (verified across
     markdown/python/go/js/rust).
 
-    Note: line endings are normalized via ``"\\n".join(text.splitlines())``,
-    which collapses ``\\r\\n``/lone ``\\r`` to ``\\n`` and strips a single
-    trailing newline. Output length matches the normalized text, not
-    necessarily ``len(text)``.
+    Line endings are normalized to LF and any trailing newline is stripped
+    before the cache key is computed, so callers with different raw
+    representations of the same content always hit the same cache entry.
+    Output length matches the normalized text, not necessarily ``len(text)``.
     """
-    if not language:
-        return Content(text)
-
-    lexer = _get_cached_lexer(language)
-    if lexer is None:
-        return Content(text)
-
-    text = "\n".join(text.splitlines())
-    spans: list[Span] = []
-
-    pos = 0
-    for token_type, token in lexer.get_tokens(text):
-        current_type = token_type
-        while True:
-            if style := HighlightTheme.STYLES.get(current_type):
-                spans.append(Span(pos, pos + len(token), style))
-                break
-            if (current_type := current_type.parent) is None:
-                break
-        pos += len(token)
-
-    return Content(text, spans=spans).stylize_before("$text")
+    return _highlight_normalized("\n".join(text.splitlines()), language)
 
 
 def highlight_lines(text: str, language: str) -> list[Content]:
