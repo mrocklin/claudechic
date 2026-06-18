@@ -1,6 +1,10 @@
 """Chat widgets - messages, input, and thinking indicator."""
 
+import asyncio
+import logging
 import re
+import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -12,6 +16,8 @@ from textual.message import Message
 from textual.widgets import Markdown, TextArea, Static
 
 from claudechic.errors import log_exception
+
+log = logging.getLogger(__name__)
 from claudechic.widgets.primitives.button import Button
 from claudechic.widgets.primitives.spinner import Spinner
 from claudechic.widgets.input.vi_mode import ViHandler, ViMode
@@ -366,6 +372,14 @@ class ChatInput(TextArea):
         Binding(
             "alt+b", "cursor_word_left", "Backward word", priority=True, show=False
         ),
+        # Clipboard image attachment (e.g. macOS screenshot copied to clipboard)
+        Binding(
+            "ctrl+shift+v",
+            "attach_clipboard_image",
+            "Attach clipboard image",
+            priority=True,
+            show=False,
+        ),
     ]
 
     class Submitted(Message):
@@ -497,6 +511,95 @@ class ChatInput(TextArea):
                 images.append(path)
         return images
 
+    @staticmethod
+    async def _get_clipboard_image() -> "Path | None":
+        """Try to get image data from the system clipboard and save to a temp PNG file.
+
+        Returns the path to a temp PNG file, or None if no image is in the clipboard.
+        Currently supports macOS only (via osascript + sips).
+
+        macOS stores screenshot clipboard data as TIFF internally (e.g. from
+        Cmd+Ctrl+Shift+4), so we try TIFF first then fall back to PNG.
+        sips (always available on macOS) converts TIFF to PNG before returning.
+        """
+        if sys.platform != "darwin":
+            return None
+
+        # Use a temp file for the script to avoid shell-escaping issues with
+        # AppleScript's angle-bracket type codes. «class TIFF» and «class PNGf»
+        # are AppleScript type identifiers for TIFF and PNG clipboard data.
+        script = (
+            "try\n"
+            "    set d to the clipboard as \u00abclass TIFF\u00bb\n"
+            "    set tiff to do shell script \"mktemp /tmp/chic_clipboard_XXXXXX.tiff\"\n"
+            "    set r to open for access POSIX file tiff with write permission\n"
+            "    write d to r\n"
+            "    close access r\n"
+            "    set png to tiff & \".png\"\n"
+            "    do shell script \"sips -s format png \" & quoted form of tiff & \" --out \" & quoted form of png & \" >/dev/null\"\n"
+            "    do shell script \"rm \" & quoted form of tiff\n"
+            "    return png\n"
+            "on error\n"
+            "end try\n"
+            "try\n"
+            "    set d to the clipboard as \u00abclass PNGf\u00bb\n"
+            "    set f to do shell script \"mktemp /tmp/chic_clipboard_XXXXXX.png\"\n"
+            "    set r to open for access POSIX file f with write permission\n"
+            "    write d to r\n"
+            "    close access r\n"
+            "    return f\n"
+            "on error\n"
+            "end try\n"
+            "return \"\""
+        )
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".applescript", delete=False
+            ) as f:
+                f.write(script)
+                script_path = Path(f.name)
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "osascript",
+                    str(script_path),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            finally:
+                script_path.unlink(missing_ok=True)
+
+            path_str = stdout.decode().strip()
+            if path_str:
+                path = Path(path_str)
+                if path.exists() and path.stat().st_size > 0:
+                    return path
+        except Exception:
+            log.debug("Clipboard image fetch failed", exc_info=True)
+        return None
+
+    async def _attach_clipboard_image(self) -> bool:
+        """Try to attach a clipboard image. Returns True if an image was attached."""
+        path = await self._get_clipboard_image()
+        if path:
+            try:
+                self.app._attach_image(path)  # type: ignore[attr-defined]
+                self.app.notify("Screenshot attached from clipboard")
+                return True
+            finally:
+                path.unlink(missing_ok=True)
+        return False
+
+    def action_attach_clipboard_image(self) -> None:
+        """Attach image from clipboard if available (e.g. macOS screenshot)."""
+
+        async def _run() -> None:
+            attached = await self._attach_clipboard_image()
+            if not attached:
+                self.app.notify("No image found in clipboard", severity="warning")
+
+        self.run_worker(_run())
+
     def on_paste(self, event) -> None:
         """Intercept paste - check for images BEFORE inserting text."""
         images = self._is_image_path(event.text)
@@ -516,6 +619,19 @@ class ChatInput(TextArea):
             event.prevent_default()
             event.stop()
             return
+
+        # Empty paste may mean the clipboard holds image data rather than text
+        # (e.g. Cmd+Ctrl+Shift+4 on macOS copies a screenshot without saving a file)
+        if not event.text.strip():
+
+            async def _try_clipboard_image() -> None:
+                await self._attach_clipboard_image()
+
+            self.run_worker(_try_clipboard_image())
+            event.prevent_default()
+            event.stop()
+            return
+
         # Wrap multi-line pastes in triple backticks for markdown formatting
         if "\n" in event.text:
             wrapped = f"```\n{event.text}\n```"
