@@ -7,6 +7,7 @@ Exposes tools for Claude to manage agents within claudechic:
 - tell_agent: Send message to existing agent (no reply expected)
 - list_agents: List current agents and their status
 - close_agent: Close an agent by name
+- set_theme: Switch the live UI theme (and persist to ~/.claude/.claudechic.yaml)
 - finish_worktree: Finish current agent's worktree (commit, rebase, merge, cleanup)
 """
 
@@ -477,6 +478,38 @@ def _close_worktree_agent(agent: Any) -> None:
 
 
 @tool(
+    "set_theme",
+    "Switch the live UI theme. The change is applied immediately (no restart) "
+    "and persisted to ~/.claude/.claudechic.yaml so it survives the next launch. "
+    "Pass a registered theme name (built-in Textual themes, claudechic's chic/chic-light, "
+    "or any user-defined theme from .claudechic.yaml). Use this instead of editing the "
+    "yaml file directly when Chic is running.",
+    {"name": str},
+)
+async def set_theme(args: dict[str, Any]) -> dict[str, Any]:
+    """Set the live UI theme and persist to config."""
+    try:
+        if _app is None:
+            return _error_response("App not initialized")
+        _track_mcp_tool("set_theme")
+
+        name = args["name"]
+        available = sorted(_app.available_themes.keys())
+        if name not in _app.available_themes:
+            return _error_response(
+                f"Theme '{name}' is not registered. Available: {', '.join(available)}"
+            )
+
+        # Setting the reactive attribute triggers Textual's _watch_theme
+        # (live repaint) and claudechic's watch_theme (persists to YAML).
+        _app.theme = name
+        return _text_response(f"Theme set to '{name}' (live + persisted)")
+    except Exception as e:
+        log.exception("set_theme failed")
+        return _error_response(f"Failed to set theme: {e}")
+
+
+@tool(
     "close_agent",
     "Close an agent by name. Cannot close the last remaining agent.",
     {"name": str},
@@ -525,6 +558,7 @@ def create_chic_server(caller_name: str | None = None):
         _make_whoami(caller_name),
         list_agents,
         close_agent,
+        set_theme,
     ]
 
     # finish_worktree is experimental - enable with experimental.finish_worktree: true

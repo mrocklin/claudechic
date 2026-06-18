@@ -9,9 +9,14 @@ from textual.containers import Horizontal
 from textual.widgets import Static
 
 from claudechic.widgets.base.clickable import ClickableLabel
-from claudechic.widgets.layout.indicators import CPUBar, ContextBar, ProcessIndicator
+from claudechic.widgets.layout.indicators import CPUBar, ContextBar, ProcessIndicator, UsageIndicator
 from claudechic.processes import BackgroundProcess
 from claudechic.widgets.input.vi_mode import ViMode
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from claudechic.usage import UsageInfo
 
 
 class PermissionModeLabel(ClickableLabel):
@@ -130,6 +135,7 @@ class StatusFooter(Static):
             )
             yield Static("", id="footer-spacer")
             yield ProcessIndicator(id="process-indicator", classes="hidden")
+            yield UsageIndicator(id="usage-indicator", classes="hidden")
             yield ContextBar(id="context-bar")
             yield CPUBar(id="cpu-bar")
             yield Static("", id="branch-label", classes="footer-label")
@@ -175,6 +181,11 @@ class StatusFooter(Static):
         """Update the process indicator."""
         if indicator := self.query_one_optional("#process-indicator", ProcessIndicator):
             indicator.update_processes(processes)
+
+    def update_usage(self, usage: "UsageInfo") -> None:
+        """Push fresh API usage data to the usage indicator."""
+        if indicator := self.query_one_optional("#usage-indicator", UsageIndicator):
+            indicator.update_usage(usage)
 
     def update_vi_mode(self, mode: ViMode | None, enabled: bool = True) -> None:
         """Update the vi-mode indicator."""

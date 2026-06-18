@@ -1,5 +1,12 @@
 """Resource indicator widgets - context bar, CPU monitor, and process indicator."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from claudechic.usage import UsageInfo
+
 import psutil
 
 from textual.app import RenderResult
@@ -111,6 +118,91 @@ class ContextBar(IndicatorWidget):
 
         if isinstance(self.app, ChatApp):
             self.app._handle_prompt("/context")
+
+
+class UsageIndicator(IndicatorWidget):
+    """Display API rate limit as a compact bar in the footer.
+
+    Shows the most constrained (highest utilization) of the 5-hour or 7-day
+    limits.  Hidden until the first fetch completes.  Click to open the full
+    /usage report.
+    """
+
+    DEFAULT_CSS = """
+    UsageIndicator {
+        width: auto;
+        padding: 0 1;
+    }
+    UsageIndicator.hidden {
+        display: none;
+    }
+    """
+
+    # -1 means "not yet fetched / unavailable".
+    # layout=True so the widget re-measures its auto width when these change: the
+    # label can widen ("7d" → "5hr"), and without a relayout the widget keeps its
+    # old, narrower width and crops the now-trailing pie glyph.
+    utilization = reactive(-1.0, layout=True)
+    limit_label = reactive("", layout=True)  # "5hr" or "7d"
+
+    def update_usage(self, usage: UsageInfo) -> None:
+        """Push fresh usage data into the widget."""
+        candidates = [
+            ("5hr", usage.five_hour),
+            ("7d", usage.seven_day),
+        ]
+        available = [(lbl, lim) for lbl, lim in candidates if lim is not None]
+        if not available:
+            self.utilization = -1.0
+            self.add_class("hidden")
+            return
+
+        lbl, lim = max(available, key=lambda x: x[1].utilization)
+        self.limit_label = lbl
+        self.utilization = lim.utilization
+        self.remove_class("hidden")
+
+    # Clockwise fill sequence: 12 o'clock → 3 → 6 → 9 → full.
+    # Each character adds one quarter-turn of fill.
+    _PIE_STEPS = [
+        (0.20, "○"),  #   0–20 %: empty ring
+        (0.40, "◔"),  #  20–40 %: upper-right quadrant (12→3)
+        (0.60, "◑"),  #  40–60 %: right half (12→6)
+        (0.80, "◕"),  #  60–80 %: all but upper-left (12→9)
+        (1.01, "●"),  #  80–100%: full disc
+    ]
+
+    def render(self) -> RenderResult:
+        if self.utilization < 0:
+            return Text("")
+
+        pct = min(self.utilization / 100.0, 1.0)
+
+        pie = next(ch for threshold, ch in self._PIE_STEPS if pct < threshold)
+
+        theme = self.app.current_theme
+        warning = theme.warning if isinstance(theme.warning, str) else "#c07800"
+        error = theme.error if isinstance(theme.error, str) else "#cc3333"
+        muted = "#888888" if theme.dark else "#555555"
+
+        if pct < 0.5:
+            color = muted
+        elif pct < 0.8:
+            color = warning
+        else:
+            color = error
+
+        result = Text()
+        result.append(f"{self.limit_label} ", style=muted)
+        result.append(pie, style=color)
+        return result
+
+    def on_click(self, event) -> None:
+        """Show the full /usage report on click."""
+        from claudechic.app import ChatApp
+
+        if isinstance(self.app, ChatApp):
+            self.app._handle_usage_command()
 
 
 class ProcessIndicator(IndicatorWidget):
