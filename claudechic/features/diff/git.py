@@ -3,8 +3,49 @@
 import asyncio
 import difflib
 import re
+import subprocess
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
+
+
+@lru_cache(maxsize=16)
+def get_base_branch(cwd: str) -> str | None:
+    """Return the upstream default branch ref (e.g. 'origin/main') for branch-diff comparisons.
+
+    Tries `git symbolic-ref refs/remotes/origin/HEAD` first, then falls back to
+    common defaults. Returns None if nothing usable is found.
+
+    Cached per-cwd: base branch doesn't change at runtime; avoids re-spawning
+    git on every Ctrl+click. Restart the app if you re-init the repo.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    for ref in ("origin/main", "origin/master", "main", "master"):
+        try:
+            r = subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", ref],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if r.returncode == 0:
+                return ref
+        except (subprocess.SubprocessError, OSError):
+            continue
+    return None
 
 
 @dataclass

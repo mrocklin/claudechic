@@ -6,6 +6,7 @@ from .git import (
     Hunk,
     HunkComment,
     format_hunk_comments,
+    get_base_branch,
     get_changes,
     get_file_stats,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "Hunk",
     "HunkComment",
     "format_hunk_comments",
+    "get_base_branch",
     "get_changes",
     "get_file_stats",
     "DiffSidebar",

@@ -2049,7 +2049,31 @@ class ChatApp(App):
         handle_command(self, f"/shell -i {editor} {event.plan_path}")
 
     def on_file_item_selected(self, event: FileItem.Selected) -> None:
-        """Handle file item click - open diff view focused on that file."""
+        """Handle file item click.
+
+        - plain click: diff vs HEAD (uncommitted changes)
+        - ctrl+click: diff this branch vs its base branch
+        - double-click: open the file in $EDITOR
+        """
+        if event.double_click:
+            editor = os.environ.get("EDITOR", "vi")
+            handle_command(self, f"/shell -i {editor} {event.file_path}")
+            return
+        if event.ctrl:
+            from claudechic.features.diff import get_base_branch
+
+            agent = self._agent
+            if not agent:
+                self.notify("No active agent", severity="error")
+                return
+            base = get_base_branch(str(agent.cwd))
+            if base:
+                self._toggle_diff_mode_for_file(
+                    str(event.file_path), target=f"{base}..."
+                )
+            else:
+                self.notify("Could not detect base branch", severity="warning")
+            return
         self._toggle_diff_mode_for_file(str(event.file_path))
 
     def on_hamburger_button_sidebar_toggled(
@@ -3131,8 +3155,8 @@ class ChatApp(App):
 
         self.push_screen(DiffScreen(agent.cwd, target or "HEAD"), on_dismiss)
 
-    def _toggle_diff_mode_for_file(self, file_path: str) -> None:
-        """Show diff screen focused on a specific file."""
+    def _toggle_diff_mode_for_file(self, file_path: str, target: str = "HEAD") -> None:
+        """Show diff screen focused on a specific file (default: vs HEAD)."""
         from claudechic.features.diff import HunkComment, format_hunk_comments
         from claudechic.screens import DiffScreen
 
@@ -3147,7 +3171,7 @@ class ChatApp(App):
             self.chat_input.focus()
 
         self.push_screen(
-            DiffScreen(agent.cwd, "HEAD", focus_file=file_path), on_dismiss
+            DiffScreen(agent.cwd, target, focus_file=file_path), on_dismiss
         )
 
     def _update_vi_mode(self, enabled: bool) -> None:
